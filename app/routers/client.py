@@ -23,11 +23,14 @@ class AccountResponse(BaseModel):
     class Config:
         from_attributes = True
 
+from datetime import datetime
+
 class ClientResponse(BaseModel):
     id: int
     name: str
     phone: Optional[str]
     pan: Optional[str]
+    created_at: Optional[datetime] = None
     accounts: List[AccountResponse] = []
 
     class Config:
@@ -41,12 +44,10 @@ def create_client(client_in: ClientCreate, db: Session = Depends(get_db)):
     db.refresh(db_client)
     return db_client
 
-@router.get("/", response_model=ClientResponse)
-def get_client(db: Session = Depends(get_db)):
-    client = db.execute(select(Client)).scalars().first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    return client
+@router.get("/", response_model=List[ClientResponse])
+def get_clients(db: Session = Depends(get_db)):
+    clients = db.execute(select(Client)).scalars().all()
+    return list(clients)
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_client(client_id: int, db: Session = Depends(get_db)):
