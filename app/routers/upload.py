@@ -1,0 +1,116 @@
+import os
+import shutil
+from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, BackgroundTasks
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+
+from app.database import get_db
+from app.models import Client, Account, Holding
+from app.parsers.detector import detect_and_parse
+from app.sector_map import lookup_sector
+from app.analysis import run_analysis
+
+router = APIRouter(prefix="/upload", tags=["Upload"])
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+
+@router.post("/")
+def upload_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    client_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Upload a document for an existing client. Create the client first via POST /client."""
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found. Create the client first via POST /api/client")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    try:
+        parsed = detect_and_parse(file_path, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+            
+    account = db.execute(
+        select(Account).where(
+            Account.client_id == client.id,
+            Account.account_number == parsed.account_number
+        )
+    ).scalars().first()
+    
+    if account:
+        holdings_to_delete = db.execute(select(Holding).where(Holding.account_id == account.id)).scalars().all()
+        for h in holdings_to_delete:
+            db.delete(h)
+        
+        account.account_type = parsed.account_type
+        account.portfolio_name = parsed.portfolio_name
+        account.source_file = file.filename
+        account.statement_date = parsed.statement_date
+    else:
+        account = Account(
+            client_id=client.id,
+            account_type=parsed.account_type,
+            account_number=parsed.account_number,
+            portfolio_name=parsed.portfolio_name,
+            source_file=file.filename,
+            statement_date=parsed.statement_date
+        )
+        db.add(account)
+        db.commit()
+        db.refresh(account)
+        
+    holdings_to_add = []
+    for ph in parsed.holdings:
+        sector, market_cap = lookup_sector(ph.security_name)
+        h = Holding(
+            account_id=account.id,
+            security_name=ph.security_name,
+            isin=ph.isin,
+            quantity=ph.quantity,
+            avg_cost=ph.avg_cost,
+            total_cost=ph.total_cost,
+            current_price=ph.current_price,
+            current_value=ph.current_value,
+            accrued_income=ph.accrued_income,
+            unrealized_gain=ph.unrealized_gain,
+            gain_pct=ph.gain_pct,
+            weight_pct=ph.weight_pct,
+            sector=sector or ph.sector,
+            asset_class=ph.asset_class,
+            market_cap=market_cap,
+            scrip_type=ph.scrip_type,
+            status=ph.status
+        )
+        holdings_to_add.append(h)
+        
+    db.add_all(holdings_to_add)
+    db.commit()
+
+    # Trigger full analysis (per-account + family) in background
+    background_tasks.add_task(_safe_run_analysis, client.id, account.id)
+
+    return {
+        "status": "success",
+        "message": f"Parsed {len(holdings_to_add)} holdings from {file.filename}",
+        "client_id": client.id,
+        "account_id": account.id,
+        "holdings_count": len(holdings_to_add)
+    }
+
+def _safe_run_analysis(client_id: int, account_id: int):
+    # Get a fresh DB session for the background task
+    db = next(get_db())
+    try:
+        run_analysis(db, client_id, target_account_id=account_id)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Analysis failed after upload: {e}")
+    finally:
+        db.close()
