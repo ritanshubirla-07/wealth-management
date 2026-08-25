@@ -19,13 +19,14 @@ The entire system is wrapped in a lean, lightning-fast Vanilla JS frontend dashb
 VIKABH uses a specialized, multi-stage pipeline to convert unstructured PDFs into intelligent financial narratives without hallucinating:
 
 1. **Deterministic Parsing (PyMuPDF):** When a user uploads a Demat or PMS statement, our custom parsers (`app/parsers/`) extract the raw text. Because financial PDFs are notoriously complex, the engine relies on strict Regex and vertical block tracking to deterministically extract Exact Quantities, Buy Prices, and Current Market Values.
-2. **Aggregated Math (SQLAlchemy):** The extracted holdings are saved to SQLite. The Python engine calculates the true performance metrics (Weighted Average Returns, HHI Concentration Index, Top Winners/Losers) using raw math, **not AI**. This guarantees that the numbers you see on the dashboard are 100% mathematically accurate.
-3. **Targeted LLM Orchestration:** Instead of dumping the entire portfolio into one massive AI prompt (which degrades quality), `llm.py` orchestrates **4 isolated LLM calls** per account:
+2. **The Parser Factory Architecture:** Financial institutions frequently change their PDF statement layouts, which notoriously breaks static parsers. To solve this, we implemented a highly modular factory pattern in `app/parsers/detector.py`. When a file is uploaded, the detector reads the first few pages, identifies the specific broker (e.g., "Kotak Demat", "Enam PMS"), and dynamically routes the PDF to a specialized parser class. This means when a bank changes their format, developers only need to update or add one isolated parser file without touching the core logic of the application.
+3. **Aggregated Math (SQLAlchemy):** The extracted holdings are saved to SQLite. The Python engine calculates the true performance metrics (Weighted Average Returns, HHI Concentration Index, Top Winners/Losers) using raw math, **not AI**. This guarantees that the numbers you see on the dashboard are 100% mathematically accurate.
+4. **Targeted LLM Orchestration:** Instead of dumping the entire portfolio into one massive AI prompt (which degrades quality), `llm.py` orchestrates **4 isolated LLM calls** per account:
    * **Overview AI:** Analyzes high-level asset allocation.
    * **Performance AI:** Analyzes the biggest winners/losers and generates a performance summary.
    * **Risk AI:** Looks exclusively at HHI concentration and cross-account overlaps to warn about vulnerabilities.
    * **Insights AI:** Generates 3-4 distinct actionable alerts (Danger/Warning/Success) based on the overall portfolio health.
-4. **Zero-Latency Dashboard (Caching):** LLMs take 15-20 seconds to process. To ensure the frontend dashboard feels as fast as PowerBI, the FastAPI backend processes the LLM calls in a background thread and saves the outputs directly into an `AnalysisCache` table. The frontend simply queries this cache, resulting in sub-millisecond load times when switching tabs.
+5. **Zero-Latency Dashboard (Caching):** LLMs take 15-20 seconds to process. To ensure the frontend dashboard feels as fast as PowerBI, the FastAPI backend processes the LLM calls in a background thread and saves the outputs directly into an `AnalysisCache` table. The frontend simply queries this cache, resulting in sub-millisecond load times when switching tabs.
 
 ---
 
