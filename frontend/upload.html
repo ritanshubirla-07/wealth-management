@@ -8,7 +8,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;-webkit-font-smoothing:antialiased}
-body{font-family:'Inter',system-ui,sans-serif;background:#edf0f5;color:#1e293b;line-height:1.5}
+body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;line-height:1.5}
 .app{display:flex;min-height:100vh}
 
 .sb{width:195px;background:#0b1628;position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;z-index:50}
@@ -141,16 +141,20 @@ async function uploadFiles() {
   document.getElementById('spinbox').style.display = 'block';
 
   // Upload concurrently
-  const promises = selectedFiles.map(f => {
+  // Upload sequentially to avoid DB locks and rate limits
+  for(let i=0; i<selectedFiles.length; i++) {
+    const f = selectedFiles[i];
+    const isLast = (i === selectedFiles.length - 1);
+    
     const fd = new FormData();
     fd.append('file', f);
     fd.append('client_id', clientId);
-    return fetch(`/api/upload/`, { method: 'POST', body: fd });
-  });
+    fd.append('trigger_analysis', isLast ? 'true' : 'false');
+    
+    await fetch(`/api/upload/`, { method: 'POST', body: fd });
+  }
 
   try {
-    await Promise.all(promises);
-    // Wait for background tasks to finish processing (Polling the overview endpoint until it doesn't return "not yet run")
     pollEngine();
   } catch(e) {
     alert("Upload failed.");

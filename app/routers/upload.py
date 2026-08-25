@@ -19,6 +19,7 @@ def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     client_id: int = Form(...),
+    trigger_analysis: str = Form("true"),
     db: Session = Depends(get_db)
 ):
     """Upload a document for an existing client. Create the client first via POST /client."""
@@ -93,14 +94,14 @@ def upload_file(
     db.add_all(holdings_to_add)
     db.commit()
 
-    from app.models import AnalysisCache
-    cache_to_delete = db.execute(select(AnalysisCache).where(AnalysisCache.client_id == client.id)).scalars().all()
-    for c in cache_to_delete:
-        db.delete(c)
-    db.commit()
-
-    # Trigger full analysis (per-account + family) in background
-    background_tasks.add_task(_safe_run_analysis, client.id, account.id)
+    if trigger_analysis.lower() == "true":
+        from app.models import AnalysisCache
+        cache_to_delete = db.execute(select(AnalysisCache).where(AnalysisCache.client_id == client.id)).scalars().all()
+        for c in cache_to_delete:
+            db.delete(c)
+        db.commit()
+        # Pass None for target_account_id so it analyzes ALL accounts for this client
+        background_tasks.add_task(_safe_run_analysis, client.id, None)
 
     return {
         "status": "success",
@@ -110,7 +111,7 @@ def upload_file(
         "holdings_count": len(holdings_to_add)
     }
 
-def _safe_run_analysis(client_id: int, account_id: int):
+def _safe_run_analysis(client_id: int, account_id: int | None):
     # Get a fresh DB session for the background task
     db = next(get_db())
     try:
