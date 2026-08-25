@@ -17,7 +17,6 @@ let apiData = {
 // ════════ INITIALIZATION ════════
 async function initDashboard() {
     await fetchAllData();
-    setupSidebar();
     renderDashboard();
 }
 
