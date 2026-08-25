@@ -21,8 +21,8 @@ from app.routers import (
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
-    title="WealthView Lite API",
-    description="WealthView Lite - Portfolio Analytics and Management API",
+    title="VIKABH Lite API",
+    description="VIKABH Lite - Portfolio Analytics and Management API",
     version="1.0.0",
 )
 

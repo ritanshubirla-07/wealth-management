@@ -2,7 +2,7 @@ from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 
-DATABASE_URL = "sqlite:///./wealthview.db"
+DATABASE_URL = "sqlite:///./VIKABH.db"
 
 engine = create_engine(
     DATABASE_URL,
