@@ -144,7 +144,8 @@ async function uploadFiles() {
   const promises = selectedFiles.map(f => {
     const fd = new FormData();
     fd.append('file', f);
-    return fetch(`/api/upload/?client_id=${clientId}`, { method: 'POST', body: fd });
+    fd.append('client_id', clientId);
+    return fetch(`/api/upload/`, { method: 'POST', body: fd });
   });
 
   try {

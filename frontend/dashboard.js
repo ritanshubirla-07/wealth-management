@@ -22,7 +22,7 @@ async function initDashboard() {
 }
 
 async function fetchAllData() {
-    const actParam = currentAccountId ? `?account_id=${currentAccountId}` : '';
+    const actParam = currentAccountId ? `?account=${currentAccountId}` : '';
     
     // Fetch all concurrently
     const [oRes, pRes, pfRes, rRes, iRes] = await Promise.all([
@@ -82,6 +82,49 @@ function renderDashboard() {
     else contentHtml = `<div class="crd"><p>Work in progress.</p></div>`;
 
     mainEl.innerHTML = headerHtml + contentHtml;
+    if(currentTab === 'overview' || currentTab === 'performance') {
+        setTimeout(initChart, 50); // allow DOM to settle
+    }
+}
+
+// ════════ CHART.JS LOGIC ════════
+function initChart() {
+    if(typeof Chart === 'undefined') {
+        setTimeout(initChart, 200);
+        return;
+    }
+    const canvas = document.getElementById('pc');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    // Create dummy chart data similar to static HTML
+    const pd = [450,480,510,540,600,680,720,790,850,910,1050,1180,1320,1540,1720];
+    const bd = [450,460,480,500,530,570,610,650,690,720,770,820,860,910,950];
+    const lb = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
+    
+    const grad = ctx.createLinearGradient(0,0,0,300);
+    grad.addColorStop(0,'rgba(37,99,235,0.15)');
+    grad.addColorStop(1,'rgba(37,99,235,0)');
+    
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: lb,
+        datasets: [
+          {label:'Portfolio',data:pd,borderColor:'#2563eb',borderWidth:2.5,backgroundColor:grad,fill:true,tension:0.4,pointRadius:0,pointHoverRadius:6,pointHoverBackgroundColor:'#fff',pointHoverBorderColor:'#2563eb',pointHoverBorderWidth:2.5},
+          {label:'Benchmark (Nifty 50)',data:bd,borderColor:'#94a3b8',borderWidth:2,borderDash:[4,4],tension:0.4,pointRadius:0,pointHoverRadius:4,pointHoverBackgroundColor:'#fff',pointHoverBorderColor:'#94a3b8'}
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { grid: { color: 'rgba(0,0,0,.04)', drawBorder: false }, ticks: { color: '#94a3b8', font: { size: 9.5, family: 'Inter' } }, border: { display: false } },
+          y: { grid: { color: 'rgba(0,0,0,.04)', drawBorder: false }, ticks: { color: '#94a3b8', font: { size: 9.5, family: 'Inter' }, callback: v => v + '%' }, border: { display: false } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
 }
 
 // ════════ TAB RENDERERS ════════
@@ -151,6 +194,24 @@ function renderOverview() {
     
     <!-- AI Narrative -->
     ${o.narrative ? `<div class="ban" style="margin-bottom:18px;background:#fff;border:1px solid #e8ecf1;color:#1e293b"><strong style="color:#2563eb">AI Summary:</strong> &nbsp; ${o.narrative}</div>` : ''}
+
+    <div class="mid" style="grid-template-columns: 1fr; margin-bottom: 20px;">
+      <div class="crd">
+        <div class="crd-h">
+          <div class="pf-hdr">
+            <div class="crd-t"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Portfolio Performance</div>
+            <div class="pf-leg">
+              <div class="pf-li"><div class="pf-line" style="background:#2563eb"></div>Portfolio</div>
+              <div class="pf-li"><div class="pf-line" style="background:#94a3b8;border-top:1px dashed #94a3b8;height:0"></div>Benchmark</div>
+            </div>
+          </div>
+        </div>
+        <div class="pf-tabs" id="ptabs">
+          <button class="on">5Y</button>
+        </div>
+        <div class="chwrap" style="height: 250px; position: relative;"><canvas id="pc"></canvas></div>
+      </div>
+    </div>
 
     <div class="mid">
       <div class="crd">

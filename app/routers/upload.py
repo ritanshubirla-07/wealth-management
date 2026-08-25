@@ -93,6 +93,12 @@ def upload_file(
     db.add_all(holdings_to_add)
     db.commit()
 
+    from app.models import AnalysisCache
+    cache_to_delete = db.execute(select(AnalysisCache).where(AnalysisCache.client_id == client.id)).scalars().all()
+    for c in cache_to_delete:
+        db.delete(c)
+    db.commit()
+
     # Trigger full analysis (per-account + family) in background
     background_tasks.add_task(_safe_run_analysis, client.id, account.id)
 
