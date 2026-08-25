@@ -67,9 +67,41 @@ def upload_file(
         db.commit()
         db.refresh(account)
         
+    import json
+    from app.llm import call_llm
+    
+    unknown_securities = []
+    for ph in parsed.holdings:
+        sector, market_cap = lookup_sector(ph.security_name)
+        if sector == "Others" or sector == "Unknown":
+            unknown_securities.append(ph.security_name)
+            
+    llm_sectors = {}
+    if unknown_securities:
+        prompt = (
+            "You are a financial data categorization engine. Given a list of Indian security/stock/fund names, "
+            "categorize them into one of these strict sectors: ['Financial Services', 'Industrials', 'Pharma', "
+            "'Consumer Goods', 'Telecom', 'IT', 'Automobile', 'Healthcare', 'Hospitality', 'Chemicals', 'Others']. "
+            "And assign a market cap: ['Large Cap', 'Mid Cap', 'Small Cap', 'Unknown']. "
+            "Return a valid JSON object ONLY, where keys are the EXACT security names provided, "
+            "and values are objects with keys 'sector' and 'market_cap'.\n\n"
+            f"Securities to categorize: {json.dumps(list(set(unknown_securities)))}"
+        )
+        try:
+            resp = call_llm("You return valid JSON.", prompt)
+            llm_sectors = json.loads(resp)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"LLM sector categorization failed: {e}")
+
     holdings_to_add = []
     for ph in parsed.holdings:
         sector, market_cap = lookup_sector(ph.security_name)
+        if sector == "Others" or sector == "Unknown":
+            if ph.security_name in llm_sectors:
+                sector = llm_sectors[ph.security_name].get("sector", "Others")
+                market_cap = llm_sectors[ph.security_name].get("market_cap", "Unknown")
+                
         h = Holding(
             account_id=account.id,
             security_name=ph.security_name,
