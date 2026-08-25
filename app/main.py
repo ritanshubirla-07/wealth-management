@@ -2,6 +2,9 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import logging
+import os
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 
 from app.database import create_tables, get_db
 from app.analysis import run_analysis
@@ -46,10 +49,15 @@ app.include_router(performance.router, prefix="/api")
 app.include_router(risk.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 
+# Mount static frontend
+frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+if os.path.exists(frontend_dir):
+    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
 
 @app.get("/")
 def root():
-    return {"message": "WealthView Lite API is running"}
+    return RedirectResponse(url="/static/clients.html")
 
 
 @app.get("/api/health")

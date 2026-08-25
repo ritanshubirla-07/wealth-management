@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WealthView — Portfolio Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;-webkit-font-smoothing:antialiased}
+body{font-family:'Inter',system-ui,sans-serif;background:#edf0f5;color:#1e293b;line-height:1.5}
+.app{display:flex;min-height:100vh}
+
+/* ═══════════════════════ SIDEBAR (Dark Navy) ═══════════════════════ */
+.sb{width:195px;background:#0b1628;position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;z-index:50;overflow-y:auto}
+.sb-logo{padding:22px 16px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sb-logo-r{display:flex;align-items:center;gap:9px}
+.sb-logo-ic{width:34px;height:34px;background:linear-gradient(135deg,#3b82f6,#10b981);border-radius:9px;display:flex;align-items:center;justify-content:center}
+.sb-logo-ic svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.2}
+.sb-logo h2{font-size:14.5px;font-weight:700;color:#fff;line-height:1.15}
+.sb-logo small{font-size:9.5px;color:#f97316;font-weight:500;letter-spacing:.3px}
+.sb-nav{flex:1;padding:14px 10px}
+.sb-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:rgba(255,255,255,.55);font-size:13px;font-weight:500;text-decoration:none;margin-bottom:2px;cursor:pointer;transition:.15s}
+.sb-nav a:hover{background:rgba(255,255,255,.06);color:rgba(255,255,255,.85)}
+.sb-nav a.act{background:#1d3a6b;color:#fff}
+.sb-nav a svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;flex-shrink:0}
+.sb-ft{padding:12px 10px;border-top:1px solid rgba(255,255,255,.08)}
+.sb-adv{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.04)}
+.sb-av{width:32px;height:32px;border-radius:50%;background:#1d3a6b;display:flex;align-items:center;justify-content:center}
+.sb-av svg{width:15px;height:15px;stroke:rgba(255,255,255,.7);fill:none;stroke-width:1.8}
+.sb-an{font-size:11.5px;font-weight:600;color:rgba(255,255,255,.9)}
+.sb-ar{font-size:9.5px;color:rgba(255,255,255,.4)}
+.sb-lo{display:flex;align-items:center;gap:7px;padding:8px 12px;color:rgba(255,255,255,.4);font-size:12px;margin-top:4px;cursor:pointer;border-radius:6px;transition:.15s}
+.sb-lo:hover{color:#ef4444;background:rgba(239,68,68,.08)}
+.sb-lo svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8}
+
+/* ═══════════════════════ MAIN (Light BG) ═══════════════════════ */
+.mn{margin-left:195px;flex:1;padding:22px 26px 28px;min-height:100vh}
+
+/* Header */
+.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}
+.hdr h1{font-size:22px;font-weight:700;color:#0f172a;letter-spacing:-.3px}
+.hdr p{font-size:12px;color:#94a3b8;margin-top:1px}
+.hdr-r{display:flex;align-items:center;gap:18px}
+.hdr-i{display:flex;align-items:center;gap:5px;font-size:12.5px;color:#64748b}
+.hdr-i svg{width:15px;height:15px;stroke:#94a3b8;fill:none;stroke-width:1.8}
+.hdr-i strong{color:#1e293b}
+.acct{background:#fff;border:1px solid #e2e8f0;color:#1e293b;padding:7px 14px;border-radius:7px;font-size:12px;font-family:inherit;cursor:pointer;outline:none;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+
+/* ═══════════════════════ KPI CARDS (White) ═══════════════════════ */
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px}
+.kpi{background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.kpi-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.kpi-lb{font-size:11.5px;color:#94a3b8;font-weight:500}
+.kpi-ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.kpi-ic svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
+.ic1{background:#e0f7f5;color:#0d9488}
+.ic2{background:#dbeafe;color:#2563eb}
+.ic3{background:#d1fae5;color:#059669}
+.kpi-v{font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-.5px;line-height:1.15}
+.kpi-d{font-size:10.5px;font-weight:600;margin-top:4px}
+.kpi-d.pos{color:#059669}
+.kpi-d.neu{color:#94a3b8}
+.hbar{height:5px;border-radius:3px;background:#e5e7eb;margin-top:8px;overflow:hidden}
+.hfill{height:100%;border-radius:3px;background:linear-gradient(90deg,#10b981,#14b8a6)}
+
+/* ═══════════════════════ CARDS (White) ═══════════════════════ */
+.crd{background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.crd-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.crd-t{font-size:14px;font-weight:600;color:#0f172a;display:flex;align-items:center;gap:7px}
+.crd-t svg{width:17px;height:17px;stroke:#3b82f6;fill:none;stroke-width:1.8}
+.crd-lk{font-size:11px;color:#3b82f6;font-weight:500;cursor:pointer;text-decoration:none;transition:.15s}
+.crd-lk:hover{color:#1d4ed8;text-decoration:underline}
+
+/* ═══════════════════════ MIDDLE ROW ═══════════════════════ */
+.mid{display:grid;grid-template-columns:1fr 1.7fr;gap:14px;margin-bottom:18px}
+
+/* Donut (SVG-based) */
+.don-area{display:flex;align-items:center;gap:22px;padding-top:6px}
+.don-wrap{position:relative;width:170px;height:170px;flex-shrink:0}
+.don-wrap svg{width:100%;height:100%;transform:rotate(-90deg)}
+.don-ctr{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.don-ctr b{font-size:17px;font-weight:700;display:block;color:#0f172a}
+.don-ctr span{font-size:10px;color:#94a3b8}
+.leg{display:flex;flex-direction:column;gap:12px}
+.leg-r{display:flex;align-items:center;gap:8px}
+.leg-d{width:9px;height:9px;border-radius:50%}
+.leg-n{font-size:12px;color:#64748b;width:48px}
+.leg-p{font-size:13px;font-weight:600;color:#1e293b;width:55px}
+.leg-vl{font-size:11px;color:#94a3b8}
+
+/* Performance chart */
+.pf-hdr{display:flex;justify-content:space-between;align-items:center;width:100%}
+.pf-leg{display:flex;gap:14px;align-items:center}
+.pf-li{display:flex;align-items:center;gap:4px;font-size:10.5px;color:#64748b}
+.pf-line{width:18px;height:2px;border-radius:1px}
+.pf-tabs{display:flex;gap:0;margin-bottom:10px;background:#f1f5f9;border-radius:6px;padding:2px}
+.pf-tabs button{padding:4px 12px;border-radius:5px;font-size:10.5px;font-weight:600;color:#94a3b8;cursor:pointer;background:transparent;border:none;font-family:inherit;transition:.15s}
+.pf-tabs button.on{background:#fff;color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.pf-tabs button:hover:not(.on){color:#64748b}
+.chwrap{height:195px;position:relative}
+.chwrap canvas{width:100%!important;height:100%!important}
+
+/* ═══════════════════════ BOTTOM ROW ═══════════════════════ */
+.bot{display:grid;grid-template-columns:1.1fr .95fr 1fr;gap:14px;margin-bottom:18px}
+
+/* Holdings table */
+.ht{width:100%;border-collapse:collapse}
+.ht th{text-align:left;font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:6px 0;border-bottom:1px solid #f1f5f9}
+.ht td{padding:9px 0;font-size:12.5px;color:#334155;border-bottom:1px solid #f8fafc}
+.ht tr:last-child td{border-bottom:none}
+.hn{display:flex;align-items:center;gap:7px}
+.hi{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;flex-shrink:0}
+.hl{font-size:12.5px;font-weight:500;color:#1e293b}
+td.tv{font-weight:600;color:#1e293b}
+td.tw{color:#94a3b8}
+td.tg{font-weight:600}
+td.tp{color:#059669}
+td.tn{color:#ef4444}
+.vf{display:flex;align-items:center;justify-content:center;gap:4px;color:#3b82f6;font-size:11.5px;font-weight:500;margin-top:12px;cursor:pointer;transition:.15s}
+.vf:hover{color:#1d4ed8}
+
+/* Sector bars */
+.sr{display:flex;align-items:center;gap:10px;margin-bottom:13px}
+.sr:last-child{margin-bottom:0}
+.sn{width:110px;font-size:11.5px;color:#64748b;text-align:right;flex-shrink:0}
+.sb2{flex:1;height:13px;background:#f1f5f9;border-radius:4px;overflow:hidden}
+.sf{height:100%;border-radius:4px;background:linear-gradient(90deg,#1e3a8a,#3b82f6)}
+.sp{font-size:11.5px;font-weight:600;color:#1e293b;width:42px;text-align:right}
+
+/* Insight items */
+.ins{display:flex;gap:10px;padding:13px 0;border-bottom:1px solid #f1f5f9}
+.ins:last-child{border-bottom:none}
+.iic{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.iic svg{width:14px;height:14px;fill:none;stroke-width:2}
+.iic.iw{background:#fef3c7}.iic.iw svg{stroke:#d97706}
+.iic.ib{background:#fee2e2}.iic.ib svg{stroke:#dc2626}
+.iic.ig{background:#d1fae5}.iic.ig svg{stroke:#059669}
+.it{font-size:12px;font-weight:600;color:#0f172a;margin-bottom:2px}
+.id{font-size:10.5px;color:#94a3b8;line-height:1.45}
+
+/* ═══════════════════════ FOOTER BANNER (Dark Navy) ═══════════════════════ */
+.ban{background:#0b1628;border-radius:12px;padding:16px 22px;display:flex;align-items:center;gap:22px}
+.ban-t{font-size:13px;font-weight:700;color:#fff;white-space:nowrap;display:flex;align-items:center;gap:7px;min-width:140px}
+.ban-t svg{width:18px;height:18px;stroke:#f59e0b;fill:none;stroke-width:2;flex-shrink:0}
+.ban-ls{flex:1;display:flex;gap:28px;font-size:11px;color:rgba(255,255,255,.6)}
+.ban-ls ul{list-style:disc;padding-left:14px;display:flex;flex-direction:column;gap:4px}
+.ban-btn{background:#dc2626;color:#fff;border:none;padding:10px 22px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit;flex-shrink:0;transition:.15s;display:flex;align-items:center;gap:5px}
+.ban-btn:hover{background:#b91c1c}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ═══ SIDEBAR ═══ -->
+<aside class="sb">
+  <div class="sb-logo">
+    <div class="sb-logo-r">
+      <div class="sb-logo-ic"><svg viewBox="0 0 24 24"><path d="M3 18L8 11L13 15L18 5L21 9"/></svg></div>
+      <div><h2>WealthView</h2><small>Portfolio Intelligence</small></div>
+    </div>
+  </div>
+  <nav class="sb-nav">
+    <a class="act" href="#overview"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview</a>
+    <a href="#portfolio"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.36 3.64"/></svg>Portfolio</a>
+    <a href="#performance"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Performance</a>
+    <a href="#risk"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Risk Analysis</a>
+    <a href="#insights"><svg viewBox="0 0 24 24"><path d="M9 18a6 6 0 1 1 6 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>Insights</a>
+    <a href="#reports"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Reports</a>
+  </nav>
+  <div class="sb-ft">
+    <div class="sb-adv">
+      <div class="sb-av"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+      <div><div class="sb-an">Advisor</div><div class="sb-ar">Wealth Management</div></div>
+    </div>
+    <div class="sb-lo"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Logout</div>
+  </div>
+</aside>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<main class="mn" id="overview">
+
+<!-- Header -->
+<div class="hdr">
+  <div><h1>Portfolio Overview</h1><p>Your Wealth, Our Focus.</p></div>
+  <div class="hdr-r">
+    <div class="hdr-i"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><strong>Dhara Falgun Shroff</strong></div>
+    <div class="hdr-i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>As of 13 Jul 2026</div>
+    <select class="acct"><option>All Accounts ▾</option><option>Enam PMS (EVP0508)</option><option>Demat — 63404707</option><option>Demat — 10481112</option></select>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="kpis">
+  <div class="kpi">
+    <div class="kpi-top"><span class="kpi-lb">Portfolio Value</span><div class="kpi-ic ic1"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div></div>
+    <div class="kpi-v">₹32.98 Cr</div><div class="kpi-d pos">▲ 31.78% vs. Invested</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-top"><span class="kpi-lb">Invested Value</span><div class="kpi-ic ic2"><svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div></div>
+    <div class="kpi-v">₹25.01 Cr</div><div class="kpi-d neu">&nbsp;</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-top"><span class="kpi-lb">Total Gain</span><div class="kpi-ic ic3"><svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div></div>
+    <div class="kpi-v">₹7.95 Cr</div><div class="kpi-d pos">▲ 31.78%</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-top"><span class="kpi-lb">Portfolio Return</span><div class="kpi-ic ic2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg></div></div>
+    <div class="kpi-v">31.78%</div><div class="kpi-d neu">vs. Cost</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-top"><span class="kpi-lb">Portfolio Health</span><div class="kpi-ic ic3"><svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/></svg></div></div>
+    <div class="kpi-v">78 / 100</div><div class="hbar"><div class="hfill" style="width:78%"></div></div>
+  </div>
+</div>
+
+<!-- Middle Row -->
+<div class="mid">
+  <!-- Asset Allocation -->
+  <div class="crd">
+    <div class="crd-h"><div class="crd-t"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.36 3.64"/></svg>Asset Allocation</div><a class="crd-lk">View Details</a></div>
+    <div class="don-area">
+      <div class="don-wrap">
+        <svg viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#f1f5f9" stroke-width="16"/>
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#2563eb" stroke-width="16" stroke-dasharray="314 314" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#10b981" stroke-width="16" stroke-dasharray="0.03 314" stroke-dashoffset="-314" stroke-linecap="round"/>
+        </svg>
+        <div class="don-ctr"><b>₹32.98 Cr</b><span>Total Value</span></div>
+      </div>
+      <div class="leg">
+        <div class="leg-r"><div class="leg-d" style="background:#2563eb"></div><span class="leg-n">Equity</span><span class="leg-p">99.99%</span><span class="leg-vl">₹32.97 Cr</span></div>
+        <div class="leg-r"><div class="leg-d" style="background:#10b981"></div><span class="leg-n">Cash</span><span class="leg-p">0.01%</span><span class="leg-vl">₹0.00 Cr</span></div>
+      </div>
+    </div>
+  </div>
+  <!-- Performance -->
+  <div class="crd">
+    <div class="crd-h">
+      <div class="pf-hdr">
+        <div class="crd-t"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Portfolio Performance</div>
+        <div class="pf-leg">
+          <div class="pf-li"><div class="pf-line" style="background:#2563eb"></div>Portfolio</div>
+          <div class="pf-li"><div class="pf-line" style="background:#94a3b8;border-top:1px dashed #94a3b8;height:0"></div>Benchmark</div>
+        </div>
+      </div>
+    </div>
+    <div class="pf-tabs" id="ptabs">
+      <button onclick="setR(0)">1M</button><button onclick="setR(1)">3M</button><button onclick="setR(2)">6M</button><button onclick="setR(3)">1Y</button><button onclick="setR(4)">3Y</button><button class="on" onclick="setR(5)">5Y</button>
+    </div>
+    <div class="chwrap"><canvas id="pc"></canvas></div>
+  </div>
+</div>
+
+<!-- Bottom Row -->
+<div class="bot">
+  <!-- Top Holdings -->
+  <div class="crd">
+    <div class="crd-h"><div class="crd-t"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>Top Holdings</div><a class="crd-lk">View All</a></div>
+    <table class="ht">
+      <thead><tr><th>Security</th><th>Value</th><th>Weight</th><th>Gain %</th></tr></thead>
+      <tbody>
+        <tr><td><div class="hn"><div class="hi" style="background:#fee2e2;color:#dc2626">PF</div><span class="hl">Piramal Finance</span></div></td><td class="tv">₹38.13 L</td><td class="tw">11.55%</td><td class="tg tp">+107.32%</td></tr>
+        <tr><td><div class="hn"><div class="hi" style="background:#dbeafe;color:#2563eb">AL</div><span class="hl">Aegis Logistics</span></div></td><td class="tv">₹30.00 L</td><td class="tw">9.14%</td><td class="tg tp">+71.37%</td></tr>
+        <tr><td><div class="hn"><div class="hi" style="background:#d1fae5;color:#059669">GP</div><span class="hl">Glenmark Pharma</span></div></td><td class="tv">₹25.77 L</td><td class="tw">7.82%</td><td class="tg tp">+173.63%</td></tr>
+        <tr><td><div class="hn"><div class="hi" style="background:#ede9fe;color:#7c3aed">EP</div><span class="hl">Emcure Pharma</span></div></td><td class="tv">₹22.88 L</td><td class="tw">6.94%</td><td class="tg tp">+30.63%</td></tr>
+        <tr><td><div class="hn"><div class="hi" style="background:#fef3c7;color:#d97706">BA</div><span class="hl">Bharti Airtel</span></div></td><td class="tv">₹21.59 L</td><td class="tw">6.55%</td><td class="tg tp">+69.78%</td></tr>
+      </tbody>
+    </table>
+    <div class="vf">View Full Portfolio →</div>
+  </div>
+
+  <!-- Sector Allocation -->
+  <div class="crd">
+    <div class="crd-h"><div class="crd-t"><svg viewBox="0 0 24 24"><rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="12" rx="1"/><rect x="17" y="4" width="4" height="16" rx="1"/></svg>Sector Allocation</div><a class="crd-lk">View Details</a></div>
+    <div style="padding-top:4px">
+      <div class="sr"><span class="sn">Financial Services</span><div class="sb2"><div class="sf" style="width:74%"></div></div><span class="sp">27.4%</span></div>
+      <div class="sr"><span class="sn">Industrials</span><div class="sb2"><div class="sf" style="width:51%"></div></div><span class="sp">18.9%</span></div>
+      <div class="sr"><span class="sn">Pharma</span><div class="sb2"><div class="sf" style="width:38%"></div></div><span class="sp">14.2%</span></div>
+      <div class="sr"><span class="sn">Consumer Goods</span><div class="sb2"><div class="sf" style="width:26%"></div></div><span class="sp">9.8%</span></div>
+      <div class="sr"><span class="sn">Telecom</span><div class="sb2"><div class="sf" style="width:18%"></div></div><span class="sp">6.6%</span></div>
+      <div class="sr"><span class="sn">Others</span><div class="sb2"><div class="sf" style="width:62%;background:linear-gradient(90deg,#059669,#10b981)"></div></div><span class="sp">23.1%</span></div>
+    </div>
+  </div>
+
+  <!-- Portfolio Insights -->
+  <div class="crd">
+    <div class="crd-h"><div class="crd-t"><svg viewBox="0 0 24 24"><path d="M9 18a6 6 0 1 1 6 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>Portfolio Insights</div><a class="crd-lk">View All</a></div>
+    <div>
+      <div class="ins">
+        <div class="iic iw"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".5"/></svg></div>
+        <div><div class="it">Concentration Risk</div><div class="id">Top 5 holdings form 57% of your portfolio. Consider further diversification.</div></div>
+      </div>
+      <div class="ins">
+        <div class="iic ib"><svg viewBox="0 0 24 24"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></div>
+        <div><div class="it">Underperforming Holdings</div><div class="id">3 holdings are currently below their cost basis: Varun Beverages, Elecon Engineering, Emami.</div></div>
+      </div>
+      <div class="ins">
+        <div class="iic ig"><svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+        <div><div class="it">Strong Performer</div><div class="id">Glenmark Pharmaceuticals has delivered 173.63% return on cost.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Footer Banner -->
+<div class="ban">
+  <div class="ban-t"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Key Risks &amp;<br>Recommendations</div>
+  <div class="ban-ls">
+    <ul><li>Portfolio is highly concentrated in individual equities.</li><li>Consider rebalancing to reduce concentration risk.</li></ul>
+    <ul><li>Monitor underperforming holdings for potential exits.</li><li>Evaluate sector and market-cap diversification.</li></ul>
+  </div>
+  <button class="ban-btn" onclick="alert('Report generation coming soon!')">View Detailed Report →</button>
+</div>
+
+</main>
+</div>
+
+<!-- Sidebar nav click handler -->
+<script>
+document.querySelectorAll('.sb-nav a').forEach(function(a){
+  a.addEventListener('click',function(e){
+    document.querySelectorAll('.sb-nav a').forEach(function(x){x.classList.remove('act')});
+    this.classList.add('act');
+  });
+});
+</script>
+
+<!-- Chart.js (loaded at end so page renders instantly) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+  var D={
+    labels:['Jul 21','Aug','Sep','Oct','Nov','Dec','Jan 22','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan 23','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan 24','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan 25','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan 26','Feb','Mar','Apr','May','Jun','Jul 26'],
+    p:[0,2.1,4.5,6.2,5.8,4.1,2.5,.8,-1.2,-3.5,-5.8,-4.2,-2.1,.5,2.8,5.1,7.5,6.8,8.2,9.5,7.8,9.2,11.5,13.2,14.8,13.5,15.2,12.8,14.5,16.2,17.8,19.5,21.2,22.8,21.5,19.8,20.5,22.2,23.8,22.1,20.5,21.8,23.2,24.5,22.8,24.2,25.5,23.8,25.2,26.8,24.5,26.2,27.5,25.8,27.2,28.5,29.8,28.5,30.2,29.5,31.78],
+    b:[0,1.5,3.2,4.8,4.2,3.1,1.8,.2,-1.8,-3.2,-5.1,-3.8,-1.5,.8,2.2,4.1,6.2,5.5,6.8,7.5,6.2,7.8,9.2,10.5,11.8,10.5,12.2,9.8,11.5,13.2,14.5,15.8,17.2,18.5,17.2,15.8,16.5,17.8,19.2,17.5,16.2,17.5,18.2,19.5,17.8,18.8,20.2,18.5,19.2,20.8,18.5,19.8,21.2,19.5,20.5,21.8,23.2,21.5,22.8,23.5,24.32]
+  };
+  var R=[{c:4},{c:6},{c:9},{c:13},{c:37},{c:61}];
+  var ch=null;
+  function draw(ri){
+    var r=R[ri],lb=D.labels.slice(-r.c),pd=D.p.slice(-r.c),bd=D.b.slice(-r.c);
+    if(ch){ch.destroy();ch=null}
+    var cv=document.getElementById('pc');if(!cv)return;
+    var ctx=cv.getContext('2d');
+    var g=ctx.createLinearGradient(0,0,0,200);
+    g.addColorStop(0,'rgba(37,99,235,.15)');g.addColorStop(1,'rgba(37,99,235,0)');
+    ch=new Chart(ctx,{
+      type:'line',
+      data:{labels:lb,datasets:[
+        {label:'Portfolio',data:pd,borderColor:'#2563eb',backgroundColor:g,fill:true,tension:.35,pointRadius:0,pointHoverRadius:4,borderWidth:2},
+        {label:'Benchmark',data:bd,borderColor:'#94a3b8',borderDash:[4,3],fill:false,tension:.35,pointRadius:0,pointHoverRadius:4,borderWidth:1.5}
+      ]},
+      options:{
+        responsive:true,maintainAspectRatio:false,animation:{duration:350},
+        interaction:{intersect:false,mode:'index'},
+        scales:{
+          x:{grid:{color:'rgba(0,0,0,.04)',drawBorder:false},ticks:{color:'#94a3b8',font:{size:9.5,family:'Inter'},maxRotation:0,autoSkip:true,maxTicksLimit:6},border:{display:false}},
+          y:{grid:{color:'rgba(0,0,0,.04)',drawBorder:false},ticks:{color:'#94a3b8',font:{size:9.5,family:'Inter'},callback:function(v){return v+'%'},stepSize:10},border:{display:false},suggestedMin:Math.min.apply(null,pd.concat(bd))-5}
+        },
+        plugins:{legend:{display:false},tooltip:{backgroundColor:'#1e293b',titleColor:'#f1f5f9',bodyColor:'#94a3b8',titleFont:{size:11,family:'Inter'},bodyFont:{size:11,family:'Inter'},borderColor:'rgba(255,255,255,.1)',borderWidth:1,padding:8,callbacks:{label:function(c){return c.dataset.label+': '+c.parsed.y.toFixed(2)+'%'}}}}
+      }
+    });
+  }
+  window.setR=function(i){
+    var btns=document.querySelectorAll('#ptabs button');
+    for(var j=0;j<btns.length;j++)btns[j].className=j===i?'on':'';
+    draw(i);
+  };
+  function init(){if(typeof Chart!=='undefined')draw(5);else setTimeout(init,200)}
+  init();
+})();
+</script>
+<script src="dashboard.js"></script>
+</body>
+</html>

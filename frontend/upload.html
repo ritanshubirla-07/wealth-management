@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WealthView — Upload PDFs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;-webkit-font-smoothing:antialiased}
+body{font-family:'Inter',system-ui,sans-serif;background:#edf0f5;color:#1e293b;line-height:1.5}
+.app{display:flex;min-height:100vh}
+
+.sb{width:195px;background:#0b1628;position:fixed;top:0;left:0;bottom:0;display:flex;flex-direction:column;z-index:50}
+.sb-logo{padding:22px 16px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sb-logo-r{display:flex;align-items:center;gap:9px}
+.sb-logo-ic{width:34px;height:34px;background:linear-gradient(135deg,#3b82f6,#10b981);border-radius:9px;display:flex;align-items:center;justify-content:center}
+.sb-logo-ic svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2.2}
+.sb-logo h2{font-size:14.5px;font-weight:700;color:#fff;line-height:1.15}
+.sb-logo small{font-size:9.5px;color:#f97316;font-weight:500;letter-spacing:.3px}
+.sb-nav{flex:1;padding:14px 10px}
+.sb-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:rgba(255,255,255,.55);font-size:13px;font-weight:500;text-decoration:none;margin-bottom:2px;cursor:pointer;}
+.sb-nav a:hover{background:rgba(255,255,255,.06);color:rgba(255,255,255,.85)}
+
+.mn{margin-left:195px;flex:1;padding:40px;display:flex;align-items:center;justify-content:center}
+
+.up-box{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.05);width:500px;max-width:100%;padding:32px;text-align:center;border:1px solid #e2e8f0}
+.up-ic{width:64px;height:64px;background:#eff6ff;color:#3b82f6;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+.up-ic svg{width:32px;height:32px;stroke:currentColor;fill:none;stroke-width:1.5}
+.up-box h2{font-size:20px;font-weight:700;margin-bottom:6px;color:#0f172a}
+.up-box p{font-size:13px;color:#64748b;margin-bottom:24px}
+
+.drop{border:2px dashed #cbd5e1;border-radius:12px;padding:40px 20px;background:#f8fafc;cursor:pointer;transition:.2s;margin-bottom:20px}
+.drop:hover, .drop.drag{border-color:#3b82f6;background:#eff6ff}
+.drop svg{width:32px;height:32px;stroke:#94a3b8;fill:none;stroke-width:1.5;margin-bottom:12px}
+.drop.drag svg{stroke:#3b82f6}
+.drop b{font-size:14px;color:#334155;display:block}
+.drop span{font-size:12px;color:#94a3b8}
+
+.fls{text-align:left;margin-bottom:24px;max-height:150px;overflow-y:auto}
+.fl{display:flex;align-items:center;gap:10px;padding:10px;background:#f1f5f9;border-radius:8px;font-size:12px;font-weight:500;color:#334155;margin-bottom:6px}
+.fl svg{width:16px;height:16px;stroke:#ef4444;fill:none;stroke-width:2}
+
+.btn-primary { background: #2563eb; color: #fff; padding: 12px 24px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: .15s; width:100%; font-family: inherit;}
+.btn-primary:hover { background: #1d4ed8; }
+.btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+
+/* SPINNER */
+.spin-wrp{display:none;flex-direction:column;align-items:center;padding:20px 0}
+.spinner {width:40px;height:40px;border:3px solid #f1f5f9;border-top-color:#3b82f6;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:16px}
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin-wrp h3{font-size:16px;font-weight:600;color:#0f172a}
+.spin-wrp p{font-size:12px;color:#64748b;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sb">
+    <div class="sb-logo">
+      <div class="sb-logo-r">
+        <div class="sb-logo-ic"><svg viewBox="0 0 24 24"><path d="M3 18L8 11L13 15L18 5L21 9"/></svg></div>
+        <div><h2>WealthView</h2><small>Portfolio Intelligence</small></div>
+      </div>
+    </div>
+    <nav class="sb-nav">
+      <a href="clients.html">← Back to Clients</a>
+    </nav>
+  </aside>
+
+  <main class="mn">
+    <div class="up-box" id="upbox">
+      <div class="up-ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg></div>
+      <h2 id="cname">Upload Statements</h2>
+      <p>Upload PMS and Demat PDFs. We extract and analyze the data securely.</p>
+
+      <div class="drop" id="dropz" onclick="document.getElementById('filei').click()">
+        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <b>Click or drag PDFs here</b>
+        <span>Supports HDFC, Kotak, Axis, NSDL, CDSL, PMS Statements</span>
+      </div>
+      <input type="file" id="filei" multiple accept=".pdf" style="display:none" onchange="handleFiles(this.files)">
+
+      <div class="fls" id="flist"></div>
+
+      <button class="btn-primary" id="ubtn" style="display:none" onclick="uploadFiles()">Analyze Portfolio →</button>
+    </div>
+
+    <div class="up-box" id="spinbox" style="display:none">
+      <div class="spin-wrp" style="display:flex">
+        <div class="spinner"></div>
+        <h3>AI Analysis Engine Running...</h3>
+        <p>Extracting unstructured PDFs, running complex algorithms, and streaming through LLM models. This usually takes 15-20 seconds.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const urlParams = new URLSearchParams(window.location.search);
+const clientId = urlParams.get('client_id');
+if(!clientId) window.location.href = 'clients.html';
+
+let selectedFiles = [];
+
+// Fetch client details
+fetch(`/api/client/${clientId}`).then(r=>r.json()).then(c => {
+  document.getElementById('cname').innerText = `Upload for ${c.name}`;
+}).catch(e=>console.error(e));
+
+// Drag & Drop
+const dropz = document.getElementById('dropz');
+dropz.ondragover = (e) => { e.preventDefault(); dropz.classList.add('drag'); }
+dropz.ondragleave = (e) => { e.preventDefault(); dropz.classList.remove('drag'); }
+dropz.ondrop = (e) => { e.preventDefault(); dropz.classList.remove('drag'); handleFiles(e.dataTransfer.files); }
+
+function handleFiles(files) {
+  for(let i=0; i<files.length; i++){
+    if(files[i].type === 'application/pdf' || files[i].name.endsWith('.pdf')){
+      selectedFiles.push(files[i]);
+    }
+  }
+  renderFiles();
+}
+
+function renderFiles() {
+  const flist = document.getElementById('flist');
+  flist.innerHTML = '';
+  selectedFiles.forEach((f, i) => {
+    flist.innerHTML += `<div class="fl"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> ${f.name} <span style="margin-left:auto;cursor:pointer;color:#94a3b8" onclick="remFile(${i})">✕</span></div>`;
+  });
+  document.getElementById('ubtn').style.display = selectedFiles.length > 0 ? 'block' : 'none';
+}
+
+function remFile(idx) {
+  selectedFiles.splice(idx, 1);
+  renderFiles();
+}
+
+async function uploadFiles() {
+  document.getElementById('upbox').style.display = 'none';
+  document.getElementById('spinbox').style.display = 'block';
+
+  // Upload concurrently
+  const promises = selectedFiles.map(f => {
+    const fd = new FormData();
+    fd.append('file', f);
+    return fetch(`/api/upload/?client_id=${clientId}`, { method: 'POST', body: fd });
+  });
+
+  try {
+    await Promise.all(promises);
+    // Wait for background tasks to finish processing (Polling the overview endpoint until it doesn't return "not yet run")
+    pollEngine();
+  } catch(e) {
+    alert("Upload failed.");
+    window.location.reload();
+  }
+}
+
+function pollEngine() {
+  fetch(`/api/overview/${clientId}`)
+    .then(r=>r.json())
+    .then(data => {
+      // If we got the actual data and it's not the default "not yet run" message
+      if(data._note && data._note.includes("not yet run")) {
+        setTimeout(pollEngine, 2500); // Check again in 2.5s
+      } else {
+        // Success! Redirect to dashboard
+        window.location.href = `dashboard.html?client_id=${clientId}`;
+      }
+    }).catch(e => {
+      setTimeout(pollEngine, 2500);
+    });
+}
+</script>
+</body>
+</html>
