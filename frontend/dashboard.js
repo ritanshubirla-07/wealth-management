@@ -206,7 +206,7 @@ function renderPortfolio() {
 
     return `
     <div class="crd">
-      <div class="crd-h"><div class="crd-t">Complete Holdings (${apiData.portfolio.total_holdings})</div></div>
+      <div class="crd-h"><div class="crd-t">Complete Holdings (${apiData.portfolio.holding_count})</div></div>
       <table class="ht" style="width:100%">
         <thead><tr><th>Security Name</th><th>Account</th><th>Market Value</th><th>Weight</th><th>Cost</th><th>Gain %</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -241,11 +241,11 @@ function renderPerformance() {
             </div>
             <div class="kpi-top" style="border-bottom: 1px solid #f1f5f9; padding-bottom: 10px;">
                 <span class="kpi-lb">Weighted Avg Return</span>
-                <b style="font-size:16px">${pf.weighted_avg_return.toFixed(2)}%</b>
+                <b style="font-size:16px">${(pf.weighted_avg || 0).toFixed(2)}%</b>
             </div>
             <div class="kpi-top" style="border-bottom: 1px solid #f1f5f9; padding-bottom: 10px;">
                 <span class="kpi-lb">Biggest Absolute Gainer</span>
-                <b style="font-size:14px; color:#059669">${pf.biggest_absolute_gain ? pf.biggest_absolute_gain.security_name : 'N/A'}</b>
+                <b style="font-size:14px; color:#059669">${pf.biggest_gain ? pf.biggest_gain.security_name : 'N/A'}</b>
             </div>
         </div>
       </div>
