@@ -1,85 +1,134 @@
-# VIKABH - Wealth Intelligence
+# VIKABH — Wealth Intelligence 📊🤖
 
-VIKABH is an AI-powered portfolio analytics and intelligence dashboard. It extracts financial data from raw Demat and PMS statement PDFs, saves it to a local SQLite database, crunches the analytics, and queries Generative AI (LLMs) to automatically write comprehensive financial narratives and risk alerts. 
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-00a393.svg)
+![Vanilla JS](https://img.shields.io/badge/Frontend-Vanilla_JS-F7DF1E.svg)
+![LLM](https://img.shields.io/badge/AI-LLM_Powered-8A2BE2.svg)
 
-The entire system is wrapped in a lean, lightning-fast Vanilla JS frontend dashboard that flawlessly matches enterprise-grade BI tools.
+**VIKABH** is an enterprise-grade, AI-powered portfolio analytics and wealth intelligence platform. 
 
----
+It solves the notoriously difficult problem of unstructured financial data by deterministically parsing raw PDF statements (Demat, PMS, Mutual Funds), calculating true mathematical performance metrics, and orchestrating targeted Generative AI (LLMs) to write bespoke financial narratives, risk alerts, and performance summaries.
 
-## 🚀 Features
-
-* **Client CRUD:** Manage multiple clients/families from a central directory.
-* **Intelligent PDF Upload:** Drag-and-drop NSDL/CDSL Demat and PMS statements. PyMuPDF extracts the exact asset allocation, buy prices, and quantities.
-* **LLM Engine:** Streams the parsed data through OpenAI / Scaleway endpoints to generate bespoke AI narratives for Performance, Risk, and Overall Health.
-* **Dynamic Analytics Engine:** Calculates HHI Index (Concentration Risk), Asset overlaps, weighted average returns, and sector exposures on the fly.
-* **Lean SPA Dashboard:** A zero-dependency Vanilla JS frontend that instantly pivots data when switching between the Family level and individual sub-accounts.
-
-## 🧠 How the AI Backend Works
-
-VIKABH uses a specialized, multi-stage pipeline to convert unstructured PDFs into intelligent financial narratives without hallucinating:
-
-1. **Deterministic Parsing (PyMuPDF):** When a user uploads a Demat or PMS statement, our custom parsers (`app/parsers/`) extract the raw text. Because financial PDFs are notoriously complex, the engine relies on strict Regex and vertical block tracking to deterministically extract Exact Quantities, Buy Prices, and Current Market Values.
-2. **The Parser Factory Architecture:** Financial institutions frequently change their PDF statement layouts, which notoriously breaks static parsers. To solve this, we implemented a highly modular factory pattern in `app/parsers/detector.py`. When a file is uploaded, the detector reads the first few pages, identifies the specific broker (e.g., "Kotak Demat", "Enam PMS"), and dynamically routes the PDF to a specialized parser class. This means when a bank changes their format, developers only need to update or add one isolated parser file without touching the core logic of the application.
-3. **Aggregated Math (SQLAlchemy):** The extracted holdings are saved to SQLite. The Python engine calculates the true performance metrics (Weighted Average Returns, HHI Concentration Index, Top Winners/Losers) using raw math, **not AI**. This guarantees that the numbers you see on the dashboard are 100% mathematically accurate.
-4. **Targeted LLM Orchestration:** Instead of dumping the entire portfolio into one massive AI prompt (which degrades quality), `llm.py` orchestrates **4 isolated LLM calls** per account:
-   * **Overview AI:** Analyzes high-level asset allocation.
-   * **Performance AI:** Analyzes the biggest winners/losers and generates a performance summary.
-   * **Risk AI:** Looks exclusively at HHI concentration and cross-account overlaps to warn about vulnerabilities.
-   * **Insights AI:** Generates 3-4 distinct actionable alerts (Danger/Warning/Success) based on the overall portfolio health.
-5. **Zero-Latency Dashboard (Caching):** LLMs take 15-20 seconds to process. To ensure the frontend dashboard feels as fast as PowerBI, the FastAPI backend processes the LLM calls in a background thread and saves the outputs directly into an `AnalysisCache` table. The frontend simply queries this cache, resulting in sub-millisecond load times when switching tabs.
+All of this is wrapped in a lightning-fast, zero-dependency Single Page Application (SPA) dashboard.
 
 ---
 
-## 🛠️ Tech Stack
+## ✨ Core Features
 
-* **Backend:** Python, FastAPI, SQLAlchemy, SQLite, PyMuPDF
-* **AI:** `requests` (provider-agnostic), explicitly optimized for `gpt-4o-mini`, `gpt-oss-120b`, or `llama-3.3-70b-instruct`. 
-* **Frontend:** Vanilla HTML/JS/CSS, Chart.js
+### 1. Intelligent PDF Extraction
+* **Factory Pattern Architecture:** Financial institutions frequently change their statement formats. VIKABH uses a `detector.py` factory pattern to identify the broker (e.g., Kotak, HDFC, Enam) and route the PDF to an isolated, specialized parser. 
+* **Zero-Hallucination Parsing:** Instead of relying on LLMs to read tables (which causes quantity hallucinations), PyMuPDF deterministically tracks vertical layouts and Regex blocks to extract 100% accurate quantities, buy prices, and current values.
+
+### 2. Multi-Account Aggregation (Family Office View)
+* Upload multiple distinct accounts (e.g., Wife's Demat, Husband's PMS) to a single Client profile.
+* The system mathematically calculates both **Account-Level** metrics and **Consolidated Family-Level** metrics.
+* **Instant Pivoting:** Use the dashboard dropdown to seamlessly toggle between the aggregated Family view and isolated individual accounts without reloading the page.
+
+### 3. Targeted LLM Orchestration
+To prevent LLM degradation from massive prompt context, VIKABH splits the AI reasoning into four isolated, parallel calls per account:
+* **Overview AI:** High-level asset allocation and health narratives.
+* **Performance AI:** Deep dive into top winners and worst drags.
+* **Risk AI:** Analyzes HHI (Herfindahl-Hirschman Index) concentration and cross-account overlaps.
+* **Insights AI:** Generates actionable 3-4 bullet alerts (Danger, Warning, Success).
+
+### 4. Zero-Latency Dashboard
+LLMs take 15-20 seconds to run. The FastAPI backend orchestrates uploads sequentially and runs the LLM calls in a background thread, saving the outputs to an `AnalysisCache` SQLite table. The Vanilla JS frontend polls this state and loads instantly once the cache is populated.
 
 ---
 
-## ⚙️ Setup & Installation
+## 🏗️ System Architecture
+
+```mermaid
+graph TD
+    A[Vanilla JS Frontend] -->|Upload PDFs| B(FastAPI Router)
+    B --> C{Detector Factory}
+    C -->|Matches NSDL| D[Demat Parser]
+    C -->|Matches Kotak| E[PMS Parser]
+    D & E --> F[(SQLite: Holdings DB)]
+    F --> G[Aggregated Math Engine]
+    G -->|Returns, HHI, Overlaps| H[LLM Orchestration Thread]
+    H -->|Prompt 1| I[Overview AI]
+    H -->|Prompt 2| J[Performance AI]
+    H -->|Prompt 3| K[Risk AI]
+    I & J & K --> L[(SQLite: Analysis Cache)]
+    A -->|Polls for Data| L
+```
+
+---
+
+## ⚙️ Installation & Setup
 
 ### 1. Clone the Repository
 ```bash
-git clone <your-repo-url>
-cd wealthview-lite
+git clone https://github.com/ritanshubirla-07/wealth-management.git
+cd wealth-management
 ```
 
 ### 2. Set Up the Virtual Environment
+Ensure you have Python 3.11+ installed.
 ```bash
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Mac/Linux
+
+# Windows
+venv\Scripts\activate
+# Mac/Linux
+source venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
 ### 3. Configure the Environment (.env)
-Create a `.env` file in the root directory (you can use `.env.example` as a template):
+Create a `.env` file in the root directory. You can use any OpenAI-compatible endpoint (OpenAI, Groq, Scaleway, Cerebras, local vLLM).
+
 ```ini
-# Defaults to OpenAI
+# Example for OpenAI
 OPENAI_API_KEY=sk-your-openai-key
 
-# OR override with Scaleway / Custom LLMs
+# Example for Custom Provider (e.g., Scaleway / LLaMA 3)
 LLM_BASE_URL=https://api.scaleway.ai/v1/chat/completions
-LLM_API_KEYS=cf8ab50d-f68e-4be7-a558-f0ae074dc627
+LLM_API_KEYS=your-api-key-here
 LLM_MODEL=llama-3.3-70b-instruct
 ```
 
-### 4. Run the Server
-Boot up the FastAPI server. The SQLite database (`VIKABH.db`) will automatically initialize on startup.
+### 4. Boot the Server
+Start the FastAPI server. The SQLite database (`VIKABH.db`) will automatically initialize on startup.
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ---
 
-## 🖥️ Usage Flow
+## 🖥️ User Workflow
 
-1. **Open the App:** Navigate to `http://localhost:8000/` in your browser. You will land on the Client Directory.
-2. **Create a Client:** Click "New Client", enter the Family Name, and hit save. 
-3. **Upload Statements:** Click the client card to open the Staging Area. Drag and drop the specific Demat or PMS PDFs for that client.
-4. **Trigger AI Analysis:** Click "Analyze Portfolio". The AI engine will spin for ~15 seconds while parsing the PDFs and hitting the LLM API to write the narratives.
-5. **View Dashboard:** Once the AI finishes, you will be redirected to the Dynamic Dashboard.
-6. **Pivot Accounts:** Use the dropdown in the top-right corner to toggle smoothly between the "Family Portfolio" (aggregated) and the individual underlying Demat/PMS accounts!
+1. **Client Directory:** Open `http://localhost:8000/`. You will land on the Client Directory. Click **"New Client"** to create a family profile.
+2. **Staging Area:** Click on the newly created client card to open `upload.html`. Drag and drop all relevant Demat and PMS PDF statements into the drop-zone.
+3. **Sequential Uploading:** Click **"Analyze Portfolio"**. The frontend sequentially queues the files to prevent database locks, triggering the LLM engine only on the final file.
+4. **AI Generation Spinner:** A loading spinner will appear for ~15 seconds while the backend crunches the raw math and queries the LLM API.
+5. **Dynamic Dashboard:** Once the AI finishes, you are instantly redirected to `dashboard.html`. Here, you can navigate between Portfolio, Performance, Risk, and Insights tabs. 
+6. **Account Toggling:** Use the top-right dropdown to instantly pivot the dashboard from the Aggregated Family View to specific individual accounts.
+
+---
+
+## 📂 Project Structure
+
+```text
+wealth-management/
+├── app/
+│   ├── main.py              # FastAPI application & static mounting
+│   ├── database.py          # SQLite connection and session maker
+│   ├── models.py            # SQLAlchemy ORM definitions (Client, Account, Holding, Cache)
+│   ├── analysis.py          # Pure math calculations (HHI, Weighted Avg)
+│   ├── llm.py               # AI orchestration and prompt engineering
+│   ├── routers/             # API Endpoints (Upload, Overview, Portfolio, etc.)
+│   └── parsers/             # PyMuPDF extraction logic
+│       ├── detector.py      # Factory router for PDFs
+│       ├── demat.py         # Standard NSDL/CDSL parsers
+│       └── pms.py           # Custom PMS format parsers
+├── frontend/                # Zero-dependency SPA
+│   ├── clients.html         # Client CRUD UI
+│   ├── upload.html          # Drag-and-Drop & Polling UI
+│   ├── dashboard.html       # Final UI Template
+│   └── dashboard.js         # Dynamic DOM manipulation & Chart.js logic
+├── .env.example             # Environment templates
+└── requirements.txt         # Python dependencies
+```
