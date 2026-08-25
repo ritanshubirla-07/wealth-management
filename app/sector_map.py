@@ -36,11 +36,11 @@ SECTOR_MAP: Dict[str, Tuple[str, str]] = {
 
 def lookup_sector(name: str) -> Tuple[str, str]:
     if not name or not isinstance(name, str):
-        return ("Unknown", "Unknown")
+        return ("Others", "Unknown")
 
     name_upper = name.upper().strip()
     for key, value in SECTOR_MAP.items():
         if key in name_upper:
             return value
 
-    return ("Unknown", "Unknown")
+    return ("Others", "Unknown")

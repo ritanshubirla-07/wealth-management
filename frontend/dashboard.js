@@ -263,11 +263,11 @@ function renderPortfolio() {
     const rows = hList.map(h => `
         <tr>
             <td><div class="hn"><span class="hl">${h.security_name}</span></div></td>
-            <td class="tw">${h.account_label}</td>
+            <td class="tw">${h.account_label || ''}</td>
             <td class="tv">${formatCr(h.current_value)}</td>
             <td class="tw">${h.weight_pct}%</td>
             <td class="tw">${formatCr(h.total_cost)}</td>
-            <td class="tg ${h.gain_pct >= 0 ? 'tp' : 'tn'}">${h.gain_pct >= 0 ? '+' : ''}${h.gain_pct.toFixed(2)}%</td>
+            <td class="tg ${(h.gain_pct||0) >= 0 ? 'tp' : 'tn'}">${(h.gain_pct||0) >= 0 ? '+' : ''}${(h.gain_pct||0).toFixed(2)}%</td>
         </tr>
     `).join('');
 
