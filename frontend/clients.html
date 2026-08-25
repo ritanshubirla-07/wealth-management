@@ -120,14 +120,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
         <label>Client Name / Family Name *</label>
         <input type="text" id="cname" placeholder="e.g. Shroff Family">
       </div>
-      <div class="fg">
-        <label>Phone Number (Optional)</label>
-        <input type="text" id="cphone" placeholder="+91 9876543210">
-      </div>
-      <div class="fg">
-        <label>PAN (Optional)</label>
-        <input type="text" id="cpan" placeholder="ABCDE1234F">
-      </div>
     </div>
     <div class="mod-ft">
       <button class="btn-sec" onclick="document.getElementById('modal').style.display='none'">Cancel</button>
@@ -170,16 +162,12 @@ async function loadClients() {
 
 async function createClient() {
   const name = document.getElementById('cname').value.trim();
-  const phone = document.getElementById('cphone').value.trim();
-  const pan = document.getElementById('cpan').value.trim();
   if(!name) return alert('Name is required');
   
   const btn = document.getElementById('cbtn');
   btn.innerText = 'Creating...';
   
   const payload = { name };
-  if(phone) payload.phone = phone;
-  if(pan) payload.pan = pan;
   
   const res = await fetch('/api/client/', {
     method: 'POST',

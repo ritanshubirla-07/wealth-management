@@ -88,6 +88,8 @@ function renderDashboard() {
 }
 
 // ════════ CHART.JS LOGIC ════════
+let myChart = null;
+
 function initChart() {
     if(typeof Chart === 'undefined') {
         setTimeout(initChart, 200);
@@ -96,6 +98,10 @@ function initChart() {
     const canvas = document.getElementById('pc');
     if(!canvas) return;
     const ctx = canvas.getContext('2d');
+    
+    if (myChart) {
+        myChart.destroy();
+    }
     
     // Create dummy chart data similar to static HTML
     const pd = [450,480,510,540,600,680,720,790,850,910,1050,1180,1320,1540,1720];
@@ -106,7 +112,7 @@ function initChart() {
     grad.addColorStop(0,'rgba(37,99,235,0.15)');
     grad.addColorStop(1,'rgba(37,99,235,0)');
     
-    new Chart(ctx, {
+    myChart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: lb,
