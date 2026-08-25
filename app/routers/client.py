@@ -46,8 +46,17 @@ def create_client(client_in: ClientCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[ClientResponse])
 def get_clients(db: Session = Depends(get_db)):
+    """Get all clients."""
     clients = db.execute(select(Client)).scalars().all()
     return list(clients)
+
+@router.get("/{client_id}", response_model=ClientResponse)
+def get_client(client_id: int, db: Session = Depends(get_db)):
+    """Get a single client by ID."""
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return client
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_client(client_id: int, db: Session = Depends(get_db)):

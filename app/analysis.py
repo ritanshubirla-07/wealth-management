@@ -382,31 +382,39 @@ def run_analysis(db: Session, client_id: int, target_account_id: int | None = No
         risk = _build_risk(ah, tv, False, label)
         insights = _build_insights(ah, tv, False, overview_data=overview)
 
-        # 4 Specialized LLM Calls per account
+        # 4 Specialized LLM Calls per account (Parallelized)
         from app.llm import generate_overview_narrative, generate_performance_narrative, generate_risk_narrative, generate_insights
+        import concurrent.futures
 
-        overview["narrative"] = generate_overview_narrative(overview)
-        
-        perf_llm = generate_performance_narrative(performance)
-        performance["performance_summary"] = perf_llm.get("performance_summary", "")
-        performance["top_performer_insight"] = perf_llm.get("top_performer_insight", "")
-        performance["concern_areas"] = perf_llm.get("concern_areas", [])
-        
-        risk_llm = generate_risk_narrative(risk)
-        risk["risk_summary"] = risk_llm.get("risk_summary", "")
-        risk["key_risks"] = risk_llm.get("key_risks", [])
-        risk["recommendations"] = risk_llm.get("recommendations", [])
-        
         top_sec = max(risk.get("sector_alloc", {}).items(), key=lambda x: x[1], default=("N/A", 0))
-        insights = generate_insights(insights, {
+        insights_context = {
             "total_value": tv,
             "return_pct": overview.get("return_pct", 0),
             "holding_count": len(ah),
             "top_sector": top_sec[0],
             "top_sector_pct": round(top_sec[1] / tv * 100, 1) if tv else 0,
             "health_score": overview.get("health_score", 0),
-        })
+        }
 
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_ov = executor.submit(generate_overview_narrative, overview)
+            future_perf = executor.submit(generate_performance_narrative, performance)
+            future_risk = executor.submit(generate_risk_narrative, risk)
+            future_ins = executor.submit(generate_insights, insights, insights_context)
+            
+            overview["narrative"] = future_ov.result()
+            perf_llm = future_perf.result()
+            risk_llm = future_risk.result()
+            insights = future_ins.result()
+
+        performance["performance_summary"] = perf_llm.get("performance_summary", "")
+        performance["top_performer_insight"] = perf_llm.get("top_performer_insight", "")
+        performance["concern_areas"] = perf_llm.get("concern_areas", [])
+        
+        risk["risk_summary"] = risk_llm.get("risk_summary", "")
+        risk["key_risks"] = risk_llm.get("key_risks", [])
+        risk["recommendations"] = risk_llm.get("recommendations", [])
+        
         _save_cache(db, client_id, acct.id, "overview", overview)
         _save_cache(db, client_id, acct.id, "performance", performance)
         _save_cache(db, client_id, acct.id, "risk", risk)
@@ -437,28 +445,35 @@ def run_analysis(db: Session, client_id: int, target_account_id: int | None = No
         fam_risk = _build_risk(all_holdings, total_fam, True, "Family", account_map)
         fam_insights = _build_insights(all_holdings, total_fam, True, account_map, fam_overview)
 
-        # 4 Specialized LLM Calls for family
-        fam_overview["narrative"] = generate_overview_narrative(fam_overview)
-        
-        fam_perf_llm = generate_performance_narrative(fam_perf)
-        fam_perf["performance_summary"] = fam_perf_llm.get("performance_summary", "")
-        fam_perf["top_performer_insight"] = fam_perf_llm.get("top_performer_insight", "")
-        fam_perf["concern_areas"] = fam_perf_llm.get("concern_areas", [])
-        
-        fam_risk_llm = generate_risk_narrative(fam_risk)
-        fam_risk["risk_summary"] = fam_risk_llm.get("risk_summary", "")
-        fam_risk["key_risks"] = fam_risk_llm.get("key_risks", [])
-        fam_risk["recommendations"] = fam_risk_llm.get("recommendations", [])
-        
+        # 4 Specialized LLM Calls for family (Parallelized)
         top_sec_fam = max(fam_risk.get("sector_alloc", {}).items(), key=lambda x: x[1], default=("N/A", 0))
-        fam_insights = generate_insights(fam_insights, {
+        fam_insights_context = {
             "total_value": total_fam,
             "return_pct": fam_overview.get("return_pct", 0),
             "holding_count": len(all_holdings),
             "top_sector": top_sec_fam[0],
             "top_sector_pct": round(top_sec_fam[1] / total_fam * 100, 1) if total_fam else 0,
             "health_score": fam_overview.get("health_score", 0),
-        })
+        }
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            fut_ov = executor.submit(generate_overview_narrative, fam_overview)
+            fut_perf = executor.submit(generate_performance_narrative, fam_perf)
+            fut_risk = executor.submit(generate_risk_narrative, fam_risk)
+            fut_ins = executor.submit(generate_insights, fam_insights, fam_insights_context)
+
+            fam_overview["narrative"] = fut_ov.result()
+            fam_perf_llm = fut_perf.result()
+            fam_risk_llm = fut_risk.result()
+            fam_insights = fut_ins.result()
+
+        fam_perf["performance_summary"] = fam_perf_llm.get("performance_summary", "")
+        fam_perf["top_performer_insight"] = fam_perf_llm.get("top_performer_insight", "")
+        fam_perf["concern_areas"] = fam_perf_llm.get("concern_areas", [])
+        
+        fam_risk["risk_summary"] = fam_risk_llm.get("risk_summary", "")
+        fam_risk["key_risks"] = fam_risk_llm.get("key_risks", [])
+        fam_risk["recommendations"] = fam_risk_llm.get("recommendations", [])
 
         _save_cache(db, client_id, None, "overview", fam_overview)
         _save_cache(db, client_id, None, "performance", fam_perf)
