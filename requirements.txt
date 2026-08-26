@@ -1,9 +1,10 @@
 ﻿fastapi
 uvicorn[standard]
 sqlalchemy
-pymupdf
+pdfplumber
+pandas
 openpyxl
 python-multipart
 pydantic
-aiofiles
 requests
+python-dotenv

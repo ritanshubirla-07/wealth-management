@@ -75,10 +75,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 
       <div class="drop" id="dropz" onclick="document.getElementById('filei').click()">
         <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        <b>Click or drag PDFs here</b>
-        <span>Supports HDFC, Kotak, Axis, NSDL, CDSL, PMS Statements</span>
+        <b>Click or drag Files here</b>
+        <span>Supports PDF, Excel (.xlsx, .xls)</span>
       </div>
-      <input type="file" id="filei" multiple accept=".pdf" style="display:none" onchange="handleFiles(this.files)">
+      <input type="file" id="filei" multiple accept=".pdf,.xlsx,.xls" style="display:none" onchange="handleFiles(this.files)">
 
       <div class="fls" id="flist"></div>
 
@@ -89,7 +89,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
       <div class="spin-wrp" style="display:flex">
         <div class="spinner"></div>
         <h3>AI Analysis Engine Running...</h3>
-        <p>Extracting unstructured PDFs, running complex algorithms, and streaming through LLM models. This usually takes 15-20 seconds.</p>
+        <p>Extracting unstructured documents, running complex algorithms, and streaming through LLM models. This usually takes 15-20 seconds.</p>
       </div>
     </div>
   </main>
@@ -115,8 +115,9 @@ dropz.ondrop = (e) => { e.preventDefault(); dropz.classList.remove('drag'); hand
 
 function handleFiles(files) {
   for(let i=0; i<files.length; i++){
-    if(files[i].type === 'application/pdf' || files[i].name.endsWith('.pdf')){
-      selectedFiles.push(files[i]);
+    const f = files[i];
+    if(f.type === 'application/pdf' || f.name.endsWith('.pdf') || f.name.endsWith('.xlsx') || f.name.endsWith('.xls')){
+      selectedFiles.push(f);
     }
   }
   renderFiles();
