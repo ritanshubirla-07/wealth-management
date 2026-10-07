@@ -9,6 +9,16 @@ from app.models import Client, Account, Holding
 router = APIRouter(prefix="/performance", tags=["Performance"])
 
 
+def _gain_key(item) -> float:
+    """Sort key for LLM-produced rows: gain_pct may be null or a string."""
+    if not isinstance(item, dict):
+        return 0.0
+    try:
+        return float(item.get("gain_pct") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @router.get("/{client_id}")
 def get_performance(client_id: int, account: str = Query("family"), db: Session = Depends(get_db)):
     client = db.get(Client, client_id)
@@ -29,7 +39,7 @@ def get_performance(client_id: int, account: str = Query("family"), db: Session 
                 data = json.loads(target.performance_json)
                 # Re-sort top_gainers by gain_pct to ensure accuracy
                 gainers = data.get("top_gainers", [])
-                gainers.sort(key=lambda x: x.get("gain_pct", 0), reverse=True)
+                gainers.sort(key=_gain_key, reverse=True)
                 if gainers and "kpis" in data:
                     data["kpis"]["best_performing_asset"] = gainers[0].get("security")
                 
@@ -54,14 +64,17 @@ def get_performance(client_id: int, account: str = Query("family"), db: Session 
             continue
         try:
             perf = json.loads(a.performance_json)
-            all_gainers.extend(perf.get("top_gainers", []))
-            all_losers.extend(perf.get("top_losers", []))
+            if not isinstance(perf, dict):
+                continue
+            g, l = perf.get("top_gainers"), perf.get("top_losers")
+            all_gainers.extend(g if isinstance(g, list) else [])
+            all_losers.extend(l if isinstance(l, list) else [])
         except (json.JSONDecodeError, TypeError):
             continue
 
     # Sort and take top 5 of each
-    all_gainers.sort(key=lambda x: x.get("gain_pct", 0), reverse=True)
-    all_losers.sort(key=lambda x: x.get("gain_pct", 0))
+    all_gainers.sort(key=_gain_key, reverse=True)
+    all_losers.sort(key=_gain_key)
 
     # Family KPIs from deterministic math (not LLM)
     cost_account_ids = {a.id for a in cost_accounts}
@@ -73,7 +86,7 @@ def get_performance(client_id: int, account: str = Query("family"), db: Session 
     total_value = sum(h.current_value or 0 for h in cost_holdings)
     absolute_return = round(((total_value - total_cost) / total_cost * 100), 2) if total_cost > 0 else None
 
-    best_asset = all_gainers[0]["security"] if all_gainers else None
+    best_asset = all_gainers[0].get("security") if all_gainers and isinstance(all_gainers[0], dict) else None
 
     no_cost_accounts = [a for a in all_accounts if not a.has_cost_data]
 

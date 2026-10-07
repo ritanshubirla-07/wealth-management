@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.database import get_db
-from app.models import Client, Account, Holding
+from app.models import Client, Account, Holding, MarketData
+from app.valuation import value_holdings
 
 router = APIRouter(prefix="/risk", tags=["Risk"])
 
@@ -42,7 +43,11 @@ def get_risk(client_id: int, account: str = Query("family"), db: Session = Depen
     if not holdings:
         return {"account_label": "Family", "_note": "No holdings found"}
 
-    total_value = sum(h.current_value or 0 for h in holdings)
+    # Concentration is measured at current market value, so these percentages
+    # match the weights shown on the Portfolio tab.
+    market_rows = db.execute(select(MarketData)).scalars().all()
+    valuation = value_holdings(holdings, market_rows)
+    total_value = valuation.market_total
     account_map = {a.id: a.portfolio_name or f"Account {a.account_number}" for a in all_accounts}
 
     # Concentration: group by security across all accounts
@@ -51,7 +56,7 @@ def get_risk(client_id: int, account: str = Query("family"), db: Session = Depen
     sector_vals = defaultdict(float)
 
     for h in holdings:
-        val = h.current_value or 0
+        val = valuation.get(h.id).effective_value
         sec_vals[h.security_name] += val
         sec_accounts[h.security_name].add(account_map.get(h.account_id, "Unknown"))
         sector_vals[h.sector or "Others"] += val
@@ -101,4 +106,6 @@ def get_risk(client_id: int, account: str = Query("family"), db: Session = Depen
         "cross_account_overlaps": overlaps,
         "risk_flags": risk_flags,
         "overall_risk_level": overall,
+        "total_value": round(total_value, 2),
+        "valuation": valuation.as_dict(),
     }

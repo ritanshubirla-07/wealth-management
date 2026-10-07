@@ -182,9 +182,17 @@ function renderOverview() {
     const kpis = `
     <div class="kpis">
       <div class="kpi">
-        <div class="kpi-top"><span class="kpi-lb">Total Value</span></div>
+        <div class="kpi-top"><span class="kpi-lb">Current Market Value</span></div>
         <div class="kpi-v">${formatCr(o.total_value)}</div>
         <div class="kpi-d ${o.return_pct >= 0 ? 'pos' : 'neu'}">${o.return_pct != null ? (o.return_pct >= 0 ? '▲ ' : '▼ ') + Math.abs(o.return_pct).toFixed(2) + '%' : '-'} vs Cost</div>
+        ${(() => {
+          // State the basis: a headline that is partly statement-priced must say so.
+          const v = o.valuation || {};
+          if (!v.available || !v.priced_holdings) return '';
+          return v.fully_priced
+            ? `<div style="font-size:10px;color:#16a34a;margin-top:4px">All ${v.priced_holdings} holdings at live CMP</div>`
+            : `<div style="font-size:10px;color:#f59e0b;margin-top:4px" title="Holdings with no live CMP are valued at their statement figure">${v.priced_holdings} at live CMP, ${v.statement_priced_holdings} at statement</div>`;
+        })()}
       </div>
       <div class="kpi">
         <div class="kpi-top"><span class="kpi-lb">Invested Value</span></div>
@@ -198,15 +206,28 @@ function renderOverview() {
       </div>
       <div class="kpi">
         <div class="kpi-top"><span class="kpi-lb">Portfolio Health</span></div>
-        <div class="kpi-v">${o.health_score || 0} / 100</div>
+        <div class="kpi-v">${o.health_score != null ? o.health_score + '%' : '&mdash;'}</div>
         <div class="hbar"><div class="hfill" style="width:${o.health_score || 0}%"></div></div>
+        ${(() => {
+          const hl = o.health || {};
+          if (o.health_score == null) return `<div class="kpi-d neu">no fundamentals yet</div>`;
+          const cls = hl.classes || {};
+          const parts = ['Growth', 'Quality', 'Ownership', 'Valuation']
+            .filter(k => cls[k] != null)
+            .map(k => `${k[0]} ${cls[k]}%`).join(' · ');
+          // State the coverage: a score over 60% of the book is not a score of the book
+          const cov = hl.scored_weight_pct != null && hl.scored_weight_pct < 99.5
+            ? `<div class="kpi-d neu" title="Cash, mutual funds and delisted scrips have no company fundamentals and are excluded from both sides of the average">on ${hl.scored_weight_pct}% of value</div>`
+            : '';
+          return `<div class="kpi-d neu" style="font-size:9.5px">${parts}</div>${cov}`;
+        })()}
       </div>
     </div>`;
     
     // Top Holdings (from overview router)
     const topHoldingsRows = (o.top_holdings || []).slice(0,5).map(h => `
         <tr><td><div class="hn"><span class="hl">${h.security.substring(0,25)}</span></div></td>
-        <td class="tv">${formatCr(h.value)}</td><td class="tw">${h.weight_pct}%</td><td class="tg ${h.gain_pct >= 0 ? 'tp' : 'tn'}">${h.gain_pct != null ? (h.gain_pct>0?'+':'')+h.gain_pct.toFixed(2)+'%' : '-'}</td></tr>
+        <td class="num tv">${formatCr(h.value)}</td><td class="num tw">${h.weight_pct}%</td><td class="num tg ${h.gain_pct >= 0 ? 'tp' : 'tn'}">${h.gain_pct != null ? (h.gain_pct>0?'+':'')+h.gain_pct.toFixed(2)+'%' : '-'}</td></tr>
     `).join('');
 
     // Asset Allocation Donut
@@ -294,11 +315,11 @@ function renderOverview() {
             <a href="#" onclick="switchTab('portfolio'); return false;" style="font-size:12px; color:#2563eb; text-decoration:none; font-weight:500">View All →</a>
         </div>
         <table class="ht">
-          <thead><tr><th>Security</th><th>Value</th><th>Gain %</th></tr></thead>
+          <thead><tr><th>Security</th><th class="num">Value</th><th class="num">Gain %</th></tr></thead>
           <tbody>
           ${(o.top_holdings || []).slice(0,5).map(h => `
             <tr><td><div class="hn"><span class="hl">${h.security.substring(0,18)}</span></div></td>
-            <td class="tv">${formatCr(h.value)}</td><td class="tg ${h.gain_pct >= 0 ? 'tp' : 'tn'}">${h.gain_pct != null ? (h.gain_pct>0?'+':'')+h.gain_pct.toFixed(2)+'%' : '-'}</td></tr>
+            <td class="num tv">${formatCr(h.value)}</td><td class="num tg ${h.gain_pct >= 0 ? 'tp' : 'tn'}">${h.gain_pct != null ? (h.gain_pct>0?'+':'')+h.gain_pct.toFixed(2)+'%' : '-'}</td></tr>
           `).join('') || '<tr><td colspan="3">No holdings.</td></tr>'}
           </tbody>
         </table>
@@ -322,26 +343,265 @@ function renderOverview() {
     `;
 }
 
+// ── Per-stock fundamental checklist (expandable Portfolio rows) ─────────────
+let checklistRows = [];          // holdings of the currently rendered table
+const checklistCache = {};       // security key -> API payload, fetched once
+
+const CLASS_STYLE = {
+  Growth:    {color: '#0e7490', bg: '#ecfeff', bar: '#06b6d4'},
+  Quality:   {color: '#15803d', bg: '#f0fdf4', bar: '#22c55e'},
+  Ownership: {color: '#b45309', bg: '#fffbeb', bar: '#f59e0b'},
+  Valuation: {color: '#6d28d9', bg: '#f5f3ff', bar: '#8b5cf6'}
+};
+
+// One hue per sector, so two holdings in the same business read as related at a
+// glance and the column scans as a group rather than a row of loose labels. Text
+// is the darkest step of each hue against its lightest tint, which keeps every
+// pairing above the 4.5:1 contrast floor at this size. Keys are Yahoo's sector
+// names; `_` is the fallback for a holding whose sector never resolved.
+const SECTOR_STYLE = {
+  'Financial Services':     {color: '#3730a3', bg: '#eef2ff', bd: '#c7d2fe'},
+  'Technology':             {color: '#1e40af', bg: '#eff6ff', bd: '#bfdbfe'},
+  'Communication Services': {color: '#a21caf', bg: '#fdf4ff', bd: '#f5d0fe'},
+  'Healthcare':             {color: '#0f766e', bg: '#f0fdfa', bd: '#99f6e4'},
+  'Consumer Goods':         {color: '#15803d', bg: '#f0fdf4', bd: '#bbf7d0'},
+  'Consumer Cyclical':      {color: '#b45309', bg: '#fffbeb', bd: '#fde68a'},
+  'Industrials':            {color: '#334155', bg: '#f8fafc', bd: '#cbd5e1'},
+  'Basic Materials':        {color: '#7c2d12', bg: '#fff7ed', bd: '#fed7aa'},
+  'Energy':                 {color: '#9f1239', bg: '#fff1f2', bd: '#fecdd3'},
+  'Utilities':              {color: '#155e75', bg: '#ecfeff', bd: '#a5f3fc'},
+  'Real Estate':            {color: '#6b21a8', bg: '#faf5ff', bd: '#e9d5ff'},
+  _:                        {color: '#475569', bg: '#f1f5f9', bd: '#e2e8f0'}
+};
+
+// The tag carries the broad sector, so the column resolves into a few familiar
+// buckets a client can be talked through. The specific industry Yahoo assigns
+// ("Banks - Regional", "Beverages - Wineries & Distilleries") is the finer
+// detail and goes in the tooltip rather than the label.
+function industryTag(h) {
+  const sector = (h.sector_group || '').trim();
+  if (!sector) return '';
+  const st = SECTOR_STYLE[sector] || SECTOR_STYLE._;
+  const industry = (h.industry || '').trim();
+  const tip = industry && industry !== sector ? `${sector} · ${industry}` : sector;
+  return `<span class="ind-tag" style="color:${st.color};background:${st.bg};border-color:${st.bd}"
+    title="${attrEsc(tip)}">${escHtml(sector)}</span>`;
+}
+
+function escHtml(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function attrEsc(text) {
+  return escHtml(text).replace(/"/g, '&quot;');
+}
+
+// Score colour runs red -> amber -> green with the share of the max earned
+function scoreColour(score, max) {
+  if (score == null || !max) return '#94a3b8';
+  const r = score / max;
+  if (r >= 0.75) return '#16a34a';
+  if (r >= 0.5)  return '#65a30d';
+  if (r >= 0.25) return '#d97706';
+  return '#dc2626';
+}
+
+function toggleChecklist(idx) {
+  const detail = document.getElementById(`detail-${idx}`);
+  const chev = document.getElementById(`chev-${idx}`);
+  if (!detail) return;
+
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : 'table-row';
+  if (chev) chev.innerHTML = isOpen ? '&#9656;' : '&#9662;';   // ▸ / ▾
+  if (isOpen) return;
+
+  const h = checklistRows[idx];
+  if (!h) return;
+  const key = (h.isin || '') + '|' + h.security_name;
+  const body = document.getElementById(`detail-body-${idx}`);
+
+  if (checklistCache[key]) {
+    body.innerHTML = renderChecklist(checklistCache[key], h);
+    return;
+  }
+
+  body.innerHTML = `<div style="padding:18px;font-size:12px;color:#64748b">Loading fundamentals for ${h.security_name}…</div>`;
+
+  const params = new URLSearchParams();
+  if (h.isin) params.set('isin', h.isin);
+  params.set('name', h.security_name);
+
+  fetch(`/api/analysis/checklist?${params.toString()}`)
+    .then(async r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
+    .then(data => {
+      checklistCache[key] = data;
+      body.innerHTML = renderChecklist(data, h);
+    })
+    .catch(e => {
+      console.error('Checklist load failed:', e);
+      body.innerHTML = `<div style="padding:18px;font-size:12px;color:#b91c1c">Could not load the checklist: ${e}</div>`;
+    });
+}
+
+function renderChecklist(data, holding) {
+  if (!data.found) {
+    return `<div style="padding:18px;font-size:12px;color:#92400e;background:#fffbeb">
+      <strong>${holding.security_name}</strong> — ${data.reason}
+    </div>`;
+  }
+
+  const attr = t => String(t || '').replace(/"/g, '&quot;');
+
+  // Static files are re-read from disk on every request while the Python process
+  // is only reloaded on restart, so this page can be newer than the API serving
+  // it. Detect that instead of throwing on a missing field.
+  if (!data.total || !Array.isArray(data.classes)) {
+    return `<div style="padding:18px 20px;font-size:12px;color:#92400e;background:#fffbeb;line-height:1.6">
+      <strong>The dashboard is newer than the running server.</strong><br>
+      This page expects the Growth / Quality / Ownership / Valuation scorecard, but the
+      API still returns the older checklist format${data.summary ? ' (tick/cross)' : ''}.
+      Restart the API process to pick up the current code:
+      <div style="margin-top:8px;font-family:ui-monospace,monospace;font-size:11px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:8px 10px">
+        python -m uvicorn app.main:app --port 8000 --reload
+      </div>
+    </div>`;
+  }
+
+  const t = data.total;
+  const asOf = data.as_of ? new Date(data.as_of).toLocaleString('en-IN') : 'unknown';
+
+  // One block per class, in Growth / Quality / Ownership / Valuation order
+  const blocks = (data.classes || []).map(cl => {
+    const st = CLASS_STYLE[cl.name] || CLASS_STYLE.Quality;
+    const pct = cl.pct == null ? 0 : cl.pct;
+    const body = (cl.rows || []).map(r => {
+      const scored = r.score != null;
+      const colour = scoreColour(r.score, r.max);
+      return `
+        <tr${r.note ? ` title="${attr(r.note)}"` : ''}>
+          <td class="c-sr">${r.sr}</td>
+          <td class="c-param">${r.parameter}${r.note ? '<span class="chk-info">&#9432;</span>' : ''}</td>
+          <td class="c-assume">${r.criteria}</td>
+          <td class="c-out">${r.value}</td>
+          <td class="c-score">${scored
+            ? `<span style="color:${colour};font-weight:700">${r.score}</span><span style="color:#94a3b8"> / ${r.max}</span>`
+            : `<span style="color:#94a3b8">— / ${r.max}</span>`}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+      <div class="vm-class">
+        <div class="vm-class-hd" style="background:${st.bg};border-color:${st.color}22">
+          <span class="vm-class-name" style="color:${st.color}">${cl.name}</span>
+          <span class="vm-class-score">${cl.score} <span style="color:#94a3b8">/ ${cl.max}</span></span>
+          <span class="vm-bar"><span class="vm-bar-fill" style="width:${pct}%;background:${st.bar}"></span></span>
+          <span class="vm-class-pct" style="color:${st.color}">${pct}%</span>
+          ${cl.excluded_params ? `<span class="vm-na" title="${attr((cl.excluded_names || []).join(', '))}">${cl.excluded_params} not shown</span>` : ''}
+        </div>
+        <div class="chk-scroll">
+          <table class="chk-t">
+            <colgroup><col style="width:42px"><col style="width:24%"><col style="width:24%"><col><col style="width:92px"></colgroup>
+            <thead><tr>
+              <th class="ctr">No.</th><th>Parameter</th><th>Criteria</th><th>Output</th><th class="ctr">Score</th>
+            </tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+  <div class="chk-wrap">
+    <div class="chk-hd">
+      <h4>${data.security}</h4>
+      ${data.code ? `<span class="chk-code">${data.code}${data.industry ? ' · ' + data.industry : ''}</span>` : ''}
+      <span class="vm-total">Total <strong>${t.score}</strong> <span style="color:#94a3b8">/ ${t.max}</span>
+        <span style="color:${scoreColour(t.score, t.max)};font-weight:700">${t.pct}%</span></span>
+    </div>
+    <div class="chk-src">
+      ${data.basis === 'consolidated' ? 'Consolidated' : (data.basis === 'standalone' ? 'Standalone' : 'Unknown-basis')}
+      financials from Screener.in, captured ${asOf} · matched by ${data.matched_by}.
+      Sales and profit growth are the average of the 1Y, 3Y and 5Y CAGRs.
+      ${t.params} parameters are scored out of ${t.max} points.
+      ${t.excluded_params ? `${t.excluded_params} of the workbook's ${t.params + t.excluded_params}
+      (worth ${t.excluded_max} points) need an annual report, a filing or a web search and are
+      not shown.` : ''}
+    </div>
+    ${blocks}
+  </div>`;
+}
+
 function renderPortfolio() {
     const hList = apiData.portfolio.holdings || [];
-    const rows = hList.map(h => `
-        <tr>
-            <td><div class="hn"><span class="hl">${h.security_name}</span></div></td>
-            <td class="tw">${h.account_label || ''}</td>
-            <td class="tv">${formatCr(h.current_value)}</td>
-            <td class="tw">${h.weight_pct}%</td>
-            <td class="tw">${formatCr(h.total_cost)}</td>
-            <td class="tg ${(h.gain_pct||0) >= 0 ? 'tp' : 'tn'}">${h.gain_pct != null ? ((h.gain_pct>0?'+':'') + h.gain_pct.toFixed(2) + '%') : '-'}</td>
+    const md = apiData.portfolio.market_data || {};
+    // Only show the Screener columns once market data has actually been imported,
+    // so the table doesn't fill with dashes for users who haven't set it up.
+    const showLive = !!md.available;
+
+    const dash = '<span style="color:#cbd5e1">—</span>';
+
+    // Kept in a global so the expand handler can look a row up by index
+    checklistRows = hList;
+
+    const rows = hList.map((h, idx) => {
+        // A row valued from the statement is flagged, so a figure that is not at
+        // CMP is never silently mixed in with the ones that are.
+        const isLive = h.valued_at === 'live';
+        return `
+        <tr class="h-row" onclick="toggleChecklist(${idx})" title="Click for the fundamental checklist">
+            <td>
+              <div class="hn">
+                <span class="chev" id="chev-${idx}">&#9656;</span>
+                <span class="hl">${h.security_name}</span>
+                ${industryTag(h)}
+              </div>
+            </td>
+            <td class="num" ${h.price_source ? `title="Price source: ${h.price_source}"` : ''}>${h.cmp != null ? '₹' + h.cmp.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : dash}</td>
+            <td class="num">${h.quantity != null ? h.quantity.toLocaleString('en-IN', {maximumFractionDigits: 3}) : dash}</td>
+            <td class="num tv">${h.effective_value != null ? formatCr(h.effective_value) : dash}${isLive ? '' : `<div style="font-size:10px;color:#f59e0b;font-weight:400" title="No live CMP matched - this is the statement value">at statement</div>`}</td>
+            <td class="num tw">${h.weight_pct.toFixed(2)}%</td>
         </tr>
-    `).join('');
+        <tr id="detail-${idx}" class="h-detail" style="display:none">
+            <td colspan="5" id="detail-body-${idx}" style="background:#f8fafc;padding:0"></td>
+        </tr>
+        `;
+    }).join('');
+
+    const colCount = 5;
+
+    // A partial revaluation must never be presented as a portfolio total: it only
+    // covers the holdings that matched, so it is labelled and scoped explicitly.
+    const liveBanner = showLive ? `
+      <div style="margin-bottom:14px;padding:10px 14px;background:${md.fully_priced ? '#f0fdf4' : '#fffbeb'};border:1px solid ${md.fully_priced ? '#bbf7d0' : '#fde68a'};border-radius:8px;font-size:12px;color:#334155">
+        <strong>Screener.in market data:</strong>
+        ${md.priced_holdings} of ${hList.length} holdings priced at CMP
+        ${md.fully_priced
+          ? ` — all values below are live.`
+          : `<div style="margin-top:4px;color:#92400e">
+               The remaining ${md.statement_priced_holdings} are shown at their statement value and marked
+               <em>at statement</em>, so Market Value and Weight are a blend of both bases.
+               Unmatched holdings need an ISIN or a Screener row — check
+               <code>/api/market/coverage/${clientId}</code>.
+             </div>`}
+      </div>` : '';
 
     return `
     <div class="crd">
       <div class="crd-h"><div class="crd-t">Complete Holdings (${apiData.portfolio.holding_count || 0})</div></div>
+      ${liveBanner}
+      <div style="overflow-x:auto">
       <table class="ht" style="width:100%">
-        <thead><tr><th>Security Name</th><th>Account</th><th>Market Value</th><th>Weight</th><th>Cost</th><th>Gain %</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="6">No holdings found.</td></tr>'}</tbody>
+        <!-- Percentage widths: the name column no longer absorbs all the slack,
+             so the four figure columns sit close to the security name. -->
+        <colgroup><col style="width:34%"><col style="width:15%"><col style="width:15%"><col style="width:20%"><col style="width:16%"></colgroup>
+        <thead><tr><th>Security Name</th><th class="num">CMP</th><th class="num">Qty</th><th class="num">Market Value</th><th class="num">Weight</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="${colCount}">No holdings found.</td></tr>`}</tbody>
       </table>
+      </div>
     </div>
     `;
 }
@@ -369,22 +629,22 @@ function renderPerformance() {
       <div class="crd">
         <div class="crd-h"><div class="crd-t">Top Winners</div></div>
         <table class="ht">
-          <thead><tr><th>Security</th><th>Gain %</th><th>Value (LLM Extracted)</th></tr></thead>
+          <thead><tr><th>Security</th><th class="num">Gain %</th><th class="num">Value (LLM Extracted)</th></tr></thead>
           <tbody>${gainers.map(h => `
               <tr><td><div class="hn"><span class="hl">${h.security.substring(0,30)}</span></div></td>
-              <td class="tg tp">+${(h.gain_pct||0).toFixed(2)}%</td>
-              <td class="tw">${h.value != null ? h.value : '-'}</td></tr>
+              <td class="num tg tp">+${(h.gain_pct||0).toFixed(2)}%</td>
+              <td class="num tw">${h.value != null ? h.value : '-'}</td></tr>
           `).join('') || '<tr><td colspan="3">No gainers found.</td></tr>'}</tbody>
         </table>
       </div>
       <div class="crd">
         <div class="crd-h"><div class="crd-t">Worst Performers (Drags)</div></div>
         <table class="ht">
-          <thead><tr><th>Security</th><th>Loss %</th><th>Value (LLM Extracted)</th></tr></thead>
+          <thead><tr><th>Security</th><th class="num">Loss %</th><th class="num">Value (LLM Extracted)</th></tr></thead>
           <tbody>${losers.map(h => `
               <tr><td><div class="hn"><span class="hl">${h.security.substring(0,30)}</span></div></td>
-              <td class="tg tn">${(h.gain_pct||0).toFixed(2)}%</td>
-              <td class="tw">${h.value != null ? h.value : '-'}</td></tr>
+              <td class="num tg tn">${(h.gain_pct||0).toFixed(2)}%</td>
+              <td class="num tw">${h.value != null ? h.value : '-'}</td></tr>
           `).join('') || '<tr><td colspan="3">No losers found.</td></tr>'}</tbody>
         </table>
       </div>
@@ -431,11 +691,11 @@ function renderRisk() {
       <div class="crd">
         <div class="crd-h"><div class="crd-t">Cross-Account Overlaps</div></div>
         <table class="ht">
-          <thead><tr><th>Security</th><th>Total Exposure</th><th>Found In</th></tr></thead>
+          <thead><tr><th>Security</th><th class="num">Total Exposure</th><th class="ctr">Found In</th></tr></thead>
           <tbody>${overlaps.map(o => `
               <tr><td><span class="hl" style="color:#dc2626">${o.security.substring(0,30)}</span></td>
-              <td class="tv">${(o.combined_pct || 0).toFixed(2)}%</td>
-              <td class="tw">${(o.accounts || []).length} accounts</td></tr>
+              <td class="num tv">${(o.combined_pct || 0).toFixed(2)}%</td>
+              <td class="ctr tw">${(o.accounts || []).length} accounts</td></tr>
           `).join('')}
           ${overlaps.length === 0 ? '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">No overlaps found across accounts. Great diversification!</td></tr>' : ''}
           </tbody>

@@ -1,4 +1,4 @@
-﻿fastapi
+fastapi
 uvicorn[standard]
 sqlalchemy
 pdfplumber
@@ -8,3 +8,5 @@ python-multipart
 pydantic
 requests
 python-dotenv
+numpy
+tabulate

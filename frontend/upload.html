@@ -51,6 +51,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin-wrp h3{font-size:16px;font-weight:600;color:#0f172a}
 .spin-wrp p{font-size:12px;color:#64748b;margin-top:4px}
+
+/* ERROR BOX */
+.err-wrp{display:none;flex-direction:column;align-items:center;padding:10px 0}
+.err-ic{width:48px;height:48px;background:#fef2f2;color:#ef4444;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.err-ic svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
+.err-wrp h3{font-size:15px;font-weight:700;color:#0f172a;margin-bottom:6px}
+.err-wrp pre{font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;text-align:left;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow-y:auto;width:100%;margin-bottom:16px;font-family:ui-monospace,monospace}
+.btn-secondary{background:#f1f5f9;color:#334155;padding:10px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;width:100%;font-family:inherit}
+.btn-secondary:hover{background:#e2e8f0}
 </style>
 </head>
 <body>
@@ -90,6 +99,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
         <div class="spinner"></div>
         <h3>AI Analysis Engine Running...</h3>
         <p>Extracting unstructured documents, running complex algorithms, and streaming through LLM models. This usually takes 15-20 seconds.</p>
+      </div>
+    </div>
+
+    <div class="up-box" id="errbox" style="display:none">
+      <div class="err-wrp" style="display:flex">
+        <div class="err-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+        <h3 id="errtitle">Upload failed</h3>
+        <pre id="errdetail"></pre>
+        <button class="btn-secondary" onclick="resetUpload()">Try Again</button>
       </div>
     </div>
   </main>
@@ -137,45 +155,93 @@ function remFile(idx) {
   renderFiles();
 }
 
-async function uploadFiles() {
+function resetUpload() {
+  document.getElementById('errbox').style.display = 'none';
+  document.getElementById('upbox').style.display = 'block';
+}
+
+function showError(title, detail) {
+  console.error(title, detail);
+  document.getElementById('spinbox').style.display = 'none';
   document.getElementById('upbox').style.display = 'none';
+  document.getElementById('errtitle').innerText = title;
+  document.getElementById('errdetail').innerText = detail;
+  document.getElementById('errbox').style.display = 'block';
+}
+
+async function uploadFiles() {
+  pollAttempts = 0;
+  document.getElementById('upbox').style.display = 'none';
+  document.getElementById('errbox').style.display = 'none';
   document.getElementById('spinbox').style.display = 'block';
 
-  // Upload concurrently
   // Upload sequentially to avoid DB locks and rate limits
   for(let i=0; i<selectedFiles.length; i++) {
     const f = selectedFiles[i];
     const isLast = (i === selectedFiles.length - 1);
-    
+
     const fd = new FormData();
     fd.append('file', f);
     fd.append('client_id', clientId);
     fd.append('trigger_analysis', isLast ? 'true' : 'false');
-    
-    await fetch(`/api/upload/`, { method: 'POST', body: fd });
+
+    let res;
+    try {
+      res = await fetch(`/api/upload/`, { method: 'POST', body: fd });
+    } catch (networkErr) {
+      // fetch itself threw -> network/CORS/server-down issue, not an HTTP error
+      showError(`Network error uploading "${f.name}"`, String(networkErr));
+      return; // stop the loop, don't touch the other files or poll
+    }
+
+    if (!res.ok) {
+      let detailText = `HTTP ${res.status} ${res.statusText}`;
+      try {
+        const body = await res.json();
+        // FastAPI HTTPException puts the message in "detail"
+        detailText = body.detail || JSON.stringify(body);
+      } catch (parseErr) {
+        try { detailText = await res.text(); } catch (_) { /* keep default */ }
+      }
+      // Log BEFORE anything else changes state / navigates, so it's not lost
+      console.error(`Upload failed for "${f.name}" (status ${res.status}):`, detailText);
+      showError(`Failed to upload "${f.name}"`, detailText);
+      return; // stop here — don't proceed to poll on a failed batch
+    }
+
+    console.log(`Uploaded "${f.name}" OK`);
   }
 
-  try {
-    pollEngine();
-  } catch(e) {
-    alert("Upload failed.");
-    window.location.reload();
-  }
+  pollEngine();
 }
 
+// Give up waiting on the LLM after ~2 minutes and open the dashboard anyway;
+// the dashboard polls for itself and renders the deterministic math meanwhile.
+const POLL_INTERVAL = 2500;
+const POLL_MAX_ATTEMPTS = 48;
+let pollAttempts = 0;
+
 function pollEngine() {
+  pollAttempts++;
   fetch(`/api/overview/${clientId}`)
-    .then(r=>r.json())
+    .then(async r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
     .then(data => {
-      // If we got the actual data and it's not the default "not yet run" message
-      if(data._note && data._note.includes("not yet run")) {
-        setTimeout(pollEngine, 2500); // Check again in 2.5s
+      // /api/overview reports readiness via `is_processing` — it never returns `_note`.
+      if (data.is_processing && pollAttempts < POLL_MAX_ATTEMPTS) {
+        setTimeout(pollEngine, POLL_INTERVAL);
       } else {
-        // Success! Redirect to dashboard
         window.location.href = `dashboard.html?client_id=${clientId}`;
       }
     }).catch(e => {
-      setTimeout(pollEngine, 2500);
+      console.error('Polling error:', e);
+      if (pollAttempts < POLL_MAX_ATTEMPTS) {
+        setTimeout(pollEngine, POLL_INTERVAL);
+      } else {
+        showError('Analysis timed out', `Could not load the portfolio overview: ${e}`);
+      }
     });
 }
 </script>

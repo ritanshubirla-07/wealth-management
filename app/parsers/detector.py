@@ -5,6 +5,8 @@ import os
 import re
 import numpy as np
 
+from app.sector_map import lookup_sector
+
 class ParsedDocument:
     def __init__(self):
         self.account_type = ""
@@ -24,6 +26,14 @@ class ParsedHolding:
         self.gain_pct = 0.0
         self.weight_pct = 0.0
         self.sector = "Unknown"
+        # isin is the reliable join key to market data; quantity is what makes
+        # mark-to-market revaluation possible (qty x live price).
+        self.isin = ""
+        self.quantity = 0.0
+        # Exchange codes lifted straight from the statement when it supplies them.
+        # A BSE code is the only way to reach a BSE-only listing on Screener.
+        self.nse_symbol = ""
+        self.bse_code = ""
 
 def clean_num(val):
     if pd.isna(val) or str(val).strip() == "": return 0.0
@@ -31,6 +41,143 @@ def clean_num(val):
     if val_str.startswith('(') and val_str.endswith(')'): val_str = '-' + val_str[1:-1]
     try: return float(val_str)
     except: return 0.0
+
+# Core columns the LLM is allowed to fill in when the regex rules come up short.
+SCHEMA_COLUMNS = ("security_name", "current_value", "total_cost", "gain_pct", "weight_pct")
+
+# Extras found by regex only. They are never worth an LLM round-trip, but they
+# are what market-data enrichment depends on, so we keep them when present.
+EXTRA_COLUMNS = ("isin", "quantity", "nse_symbol", "bse_code")
+
+# Ordered patterns per schema column. Patterns are tried in order and the first
+# header that matches (and trips no exclusion) wins, so the most specific
+# spelling beats the generic one — "market value" before a bare "value", and
+# "inv. cost" before a bare "cost".
+_HEADER_RULES = (
+    ("security_name",
+     (r'company\s*name', r'scheme\s*name', r'security', r'scrip\s*name',
+      r'instrument', r'particulars', r'stock', r'\bname\b'),
+     (r'scrip\s*type', r'account\s*type', r'\bnav\b', r'date', r'\bcode\b', r'symbol')),
+    ("current_value",
+     (r'market\s*value', r'cur\.?\s*value', r'current\s*value', r'closing\s*value',
+      r'mkt\.?\s*val', r'\bvalue\b', r'\bamount\b'),
+     (r'unit', r'\bnav\b', r'price', r'rate', r'aver', r'\bavg\b', r'cost', r'\bper\b')),
+    ("total_cost",
+     (r'inv\.?\s*cost', r'total\s*cost', r'invested', r'purchase', r'\bcost\b',
+      r'book\s*value'),
+     (r'unit', r'aver', r'\bavg\b', r'\bper\b', r'price')),
+    ("gain_pct",
+     (r'%\s*g\s*/?\s*l', r'abs\.?\s*rtn', r'absolute\s*return', r'gain\s*%',
+      r'return\s*%', r'%\s*(gain|return|chg|change)', r'\bxirr\b'),
+     ()),
+    ("weight_pct",
+     (r'%\s*assets', r'weight', r'%\s*(of\s*)?(port|holding)', r'allocation'),
+     ()),
+    ("isin",
+     (r'\bisin\b',),
+     ()),
+    # Demat statements call the share count "Balance"; funds call it "Units".
+    ("quantity",
+     (r'\bquantity\b', r'\bqty\b', r'\bunits\b', r'\bshares\b', r'\bbalance\b'),
+     (r'value', r'amount', r'cost', r'price')),
+    # Exchange codes, when the statement supplies them
+    ("nse_symbol",
+     (r'nse[\s_]*symbol', r'nse[\s_]*code', r'\bnse\b', r'\bsymbol\b', r'\bticker\b'),
+     (r'\bbse\b',)),
+    ("bse_code",
+     (r'bse[\s_]*code', r'\bbse\b', r'scrip[\s_]*code', r'security[\s_]*code'),
+     (r'\bnse\b',)),
+)
+
+
+def map_headers_deterministic(raw_columns) -> dict:
+    """Map raw statement headers onto the schema with regex rules.
+
+    Returns {raw_header: schema_column}. Each schema column is claimed at most
+    once and each raw header is used at most once, so the result can never
+    produce duplicate DataFrame columns.
+    """
+    mapping: dict = {}
+    for target, patterns, exclusions in _HEADER_RULES:
+        found = None
+        for pattern in patterns:
+            for header in raw_columns:
+                h = str(header).lower()
+                if header in mapping:
+                    continue
+                if not re.search(pattern, h):
+                    continue
+                if any(re.search(x, h) for x in exclusions):
+                    continue
+                found = header
+                break
+            if found is not None:
+                break
+        if found is not None:
+            mapping[found] = target
+    return mapping
+
+
+# Whole-label matches for rows that are portfolio aggregates or asset-class
+# headers rather than securities. Matched against the FULL cell, so a company
+# called "Apar Industries" or "Nesco Limited" is never caught by "industries".
+_AGGREGATE_LABELS = {
+    "net worth", "networth", "net value", "grand total", "total", "sub total",
+    "subtotal", "portfolio", "portfolio value", "portfolio total", "summary",
+    "holdings", "grand totals",
+    # Asset-class header rows that repeat a subtotal
+    "stocks", "stock", "equity", "equities", "mutual funds", "mutual fund",
+    "debt", "debt funds", "bonds", "gold", "etf", "etfs", "others", "other",
+    "cash and equivalent", "cash & equivalent", "cash and equivalents",
+    "liquid funds", "hybrid", "direct equity",
+}
+
+# Vendor footers ("Powered by MProfit") and similar non-data lines
+_FOOTER_RE = re.compile(r'^(powered by|generated (by|on)|disclaimer|report as on|page \d)', re.I)
+
+
+def _is_total_row(name: str) -> bool:
+    """True for aggregate, asset-class-header and footer rows.
+
+    These carry a value but are not securities. Counting them double- or
+    triple-counts the portfolio, so they must never become holdings.
+    """
+    if not name:
+        return True
+    text = re.sub(r'\s+', ' ', str(name)).strip()
+    # "Total :-", "Grand Total -", "Equity:" etc.
+    bare = re.sub(r'[\s:\-–—.,()]+$', '', text).strip().lower()
+    if bare in _AGGREGATE_LABELS:
+        return True
+    if _FOOTER_RE.match(text):
+        return True
+    # Any row that still says "total" somewhere ("Liquid Fund Total :-")
+    return bool(re.search(r'\btotals?\b', text, re.IGNORECASE))
+
+
+def _clean_code(value) -> str:
+    """Normalise an exchange-code cell; spreadsheets hand BSE codes back as floats."""
+    text = str(value or "").strip().upper()
+    if text in ("", "NAN", "NONE", "-"):
+        return ""
+    if re.match(r'^\d+\.0$', text):
+        text = text[:-2]
+    return re.sub(r'[^A-Z0-9&-]', '', text)
+
+
+_ISIN_RE = re.compile(r'^[A-Z]{2}[A-Z0-9]{9}[0-9]$')
+
+
+def normalise_isin(value) -> str:
+    """Return a clean ISIN, or "" if the cell does not hold one.
+
+    Statement cells pick up stray whitespace and the occasional footnote, and a
+    wrong ISIN is worse than none at all: it would join a holding to the wrong
+    company's market data.
+    """
+    candidate = re.sub(r'[^A-Za-z0-9]', '', str(value or "")).upper()
+    return candidate if _ISIN_RE.match(candidate) else ""
+
 
 def detect_and_parse(file_path: str, file_name: str = "") -> ParsedDocument:
     ext = os.path.splitext(file_name or file_path)[1].lower()
@@ -100,6 +247,8 @@ def detect_and_parse(file_path: str, file_name: str = "") -> ParsedDocument:
         df.columns = headers
         df = df.iloc[header_idx + 1:].reset_index(drop=True)
         
+    # Columns are only strings when a header row was found; a RangeIndex has no .str
+    df.columns = [str(c) for c in df.columns]
     df = df.loc[:, ~df.columns.str.contains('^unnamed')]
     
     # Forward-fill merged cells (e.g. "Free Balance" spanning multiple rows in Demat)
@@ -110,11 +259,23 @@ def detect_and_parse(file_path: str, file_name: str = "") -> ParsedDocument:
     doc.raw_markdown = df.to_markdown(index=False)
     doc.raw_json = json.dumps(df.to_dict(orient='records'))
         
-    # ── LLM Header Mapping ──
-    # Instead of hardcoding a dictionary, we let the LLM dynamically map
-    # whatever messy headers the bank uses to our strict 5-column schema.
-    from app.llm import call_llm_json
+    populate_holdings(df, doc)
+    return doc
+
+
+def populate_holdings(df, doc: ParsedDocument) -> ParsedDocument:
+    """Map a statement DataFrame onto the schema and fill ``doc.holdings``.
+
+    Shared by the PDF and Excel parsers so header mapping and row filtering
+    behave identically for both.
+    """
+    # ── Header Mapping ──
+    # Deterministic regex rules first (they are reliable and free), then the LLM
+    # only for schema columns the rules could not find — an unseen broker format.
     raw_columns = list(df.columns)
+    mapping = map_headers_deterministic(raw_columns)
+
+    from app.llm import call_llm_json
     sys_prompt = """You are a financial data mapping AI.
 Given a list of raw bank statement headers, map them to our strict database schema.
 Valid Columns: ["security_name", "current_value", "total_cost", "gain_pct", "weight_pct"]
@@ -127,26 +288,57 @@ CRITICAL RULES:
 4. Ignore irrelevant columns (like "ISIN", "Status", "Account Type", "Scrip Type", "Quantity").
 Return ONLY a JSON dictionary: {"raw_header_name": "valid_database_column"}"""
 
-    try:
-        mapping = call_llm_json(sys_prompt, str(raw_columns))
-        if mapping:
-            df = df.rename(columns=mapping)
-        else:
-            return doc
-    except Exception as e:
-        print(f"LLM Header Mapping Failed: {e}")
+    missing = [c for c in SCHEMA_COLUMNS if c not in mapping.values()]
+    if missing:
+        try:
+            unmapped = [c for c in raw_columns if c not in mapping]
+            llm_mapping = call_llm_json(sys_prompt, str(unmapped)) if unmapped else None
+            if isinstance(llm_mapping, dict):
+                # The LLM happily maps several raw headers onto the same schema
+                # column (e.g. both "Market Value Gain /" and "% G/L" -> gain_pct).
+                # Renaming blindly would create duplicate columns and pandas then
+                # silently drops all but one. Let the first claimant win, and never
+                # override a column the deterministic rules already found.
+                claimed = set(mapping.values())
+                for raw_header in unmapped:
+                    target = llm_mapping.get(raw_header)
+                    if target in missing and target not in claimed:
+                        mapping[raw_header] = target
+                        claimed.add(target)
+        except Exception as e:
+            print(f"LLM Header Mapping Failed: {e}")
+
+    if "security_name" not in mapping.values() or "current_value" not in mapping.values():
+        print(f"Could not locate name/value columns in {raw_columns} (mapped: {mapping})")
         return doc
+
+    df = df.copy()
+
+    df = df.rename(columns=mapping)
+    # Defensive: a raw statement can itself repeat a header label
+    df = df.loc[:, ~df.columns.duplicated()]
         
     # ── Set has_cost_data flag ──
     doc.has_cost_data = 'total_cost' in df.columns
-    
+
+    # When the statement reports a share/unit count, a row without one is an
+    # aggregate ("Net Worth", "Stocks") or a footer, not a security. This is the
+    # structural test; the label test in _is_total_row is the second net.
+    has_quantity_column = 'quantity' in df.columns
+
     # ── Build Holdings ──
     for r in df.to_dict(orient='records'):
         if 'security_name' not in r or 'current_value' not in r:
             continue
         name = str(r['security_name']).strip()
         val = clean_num(r['current_value'])
-        if not name or val == 0 or "Total" in name or str(r['current_value']) == 'nan':
+        if not name or val == 0 or _is_total_row(name) or str(r['current_value']) == 'nan':
+            continue
+        qty = clean_num(r.get('quantity', 0))
+        if has_quantity_column and qty == 0:
+            # Carries a value but no units: an aggregate or asset-class header.
+            # Tested for exactly zero, not <= 0 — a payable or short position
+            # legitimately carries a negative quantity.
             continue
             
         h = ParsedHolding()
@@ -155,7 +347,59 @@ Return ONLY a JSON dictionary: {"raw_header_name": "valid_database_column"}"""
         h.total_cost = clean_num(r.get('total_cost', 0))
         h.gain_pct = clean_num(r.get('gain_pct', 0))
         h.weight_pct = clean_num(r.get('weight_pct', 0))
-        h.asset_class = "Cash and Equivalent" if any(k in name.lower() for k in ["cash", "payable", "receivable", "income"]) else "Equity"
+        h.isin = normalise_isin(r.get('isin', ''))
+        h.quantity = qty
+        h.nse_symbol = _clean_code(r.get('nse_symbol', ''))
+        h.bse_code = _clean_code(r.get('bse_code', ''))
+        # Deterministic map first; leave "Unknown" on a miss so the upload router
+        # knows to ask the LLM to categorise it.
+        mapped_sector = lookup_sector(h.security_name)[0]
+        h.sector = mapped_sector if mapped_sector != "Others" else "Unknown"
         doc.holdings.append(h)
-        
+
+    # Third net, independent of labels and of any quantity column: a row whose
+    # value equals the sum of every smaller row is arithmetically a total, not a
+    # holding. This catches an aggregate however it is spelled.
+    doc.holdings = _drop_arithmetic_totals(doc.holdings)
     return doc
+
+
+def _drop_arithmetic_totals(holdings: list) -> list:
+    """Remove rows whose value equals the sum of all strictly smaller rows.
+
+    "Net Worth" and an asset-class subtotal both equal the sum of the securities
+    beneath them, so both are caught even when their labels are unrecognised.
+    Rows of equal value are compared against the same smaller set, so a repeated
+    subtotal is removed too.
+
+    The tolerance is deliberately tight and a minimum number of contributing rows
+    is required, so a single large genuine holding is never mistaken for a total.
+    """
+    if len(holdings) < 4:
+        return holdings
+
+    ordered = sorted(holdings, key=lambda h: h.current_value, reverse=True)
+    values = [h.current_value for h in ordered]
+    # suffix_sums[i] = sum of values[i:]
+    suffix_sums = [0.0] * (len(values) + 1)
+    for i in range(len(values) - 1, -1, -1):
+        suffix_sums[i] = suffix_sums[i + 1] + values[i]
+
+    drop = set()
+    for index, holding in enumerate(ordered):
+        value = holding.current_value
+        if value <= 0:
+            continue
+        # First position whose value is strictly smaller than this one
+        start = index + 1
+        while start < len(values) and abs(values[start] - value) < 1e-9:
+            start += 1
+        smaller_count = len(values) - start
+        if smaller_count < 3:
+            continue
+        if abs(suffix_sums[start] - value) <= max(1.0, abs(value) * 0.001):
+            drop.add(id(holding))
+
+    if not drop:
+        return holdings
+    return [h for h in holdings if id(h) not in drop]

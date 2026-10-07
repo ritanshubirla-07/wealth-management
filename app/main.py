@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Depends
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import os
@@ -6,14 +8,28 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
 from app.database import create_tables
-from app.routers import client, upload, overview, portfolio, performance, risk, insights
+from app.routers import client, upload, overview, portfolio, performance, risk, insights, market, analysis
 
 logging.basicConfig(level=logging.INFO)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    create_tables()
+    # Nightly fundamentals refresh at 01:00 IST. Set VIKABH_SCHEDULER=off when
+    # running a second instance against the same database, so two processes do
+    # not fetch the same securities over each other.
+    if os.getenv("VIKABH_SCHEDULER", "on").strip().lower() not in ("off", "0", "false"):
+        from app.scheduler import start as start_scheduler
+        start_scheduler()
+    yield
+
+
 app = FastAPI(
-    title="WealthView Lite API",
-    description="WealthView Lite - Portfolio Analytics and Management API",
+    title="VIKABH Wealth Intelligence API",
+    description="VIKABH - Portfolio Analytics and Wealth Intelligence API",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -25,11 +41,6 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    create_tables()
-
-
 # Include routers with /api prefix
 app.include_router(client.router, prefix="/api")
 app.include_router(upload.router, prefix="/api")
@@ -38,6 +49,8 @@ app.include_router(portfolio.router, prefix="/api")
 app.include_router(performance.router, prefix="/api")
 app.include_router(risk.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
+app.include_router(market.router, prefix="/api")
+app.include_router(analysis.router, prefix="/api")
 
 # Mount static frontend
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
@@ -53,3 +66,17 @@ def root():
 @app.get("/api/health")
 def health():
     return {"status": "healthy"}
+
+
+@app.get("/api/refresh/status", tags=["Refresh"])
+def refresh_status():
+    """When the nightly fundamentals refresh last ran and when it next will."""
+    from app.scheduler import status
+    return status()
+
+
+@app.post("/api/refresh/run", tags=["Refresh"])
+def refresh_run():
+    """Run the nightly refresh now, without waiting for 01:00 IST."""
+    from app.scheduler import run_now
+    return run_now()

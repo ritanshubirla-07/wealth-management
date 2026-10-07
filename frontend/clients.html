@@ -39,12 +39,86 @@ p { font-size: 14px; color: #64748b; margin-bottom: 30px; }
     <button class="btn-primary" onclick="createClient()" id="cbtn">
         Continue to Upload <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
     </button>
+
+    <!-- Market data is shared across all clients, so it is managed here rather
+         than per-client. Screener.in has no API: export a screen to CSV from
+         Screener (premium "Export" button) and load it here. -->
+    <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e2e8f0;text-align:left">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+        <label style="font-size:13px;font-weight:600;color:#334155">Screener.in market data</label>
+        <span id="mdstatus" style="font-size:11px;color:#94a3b8">checking…</span>
+      </div>
+      <p style="font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.5">
+        Export any screen from Screener (include <strong>Name</strong>, <strong>NSE Code</strong>,
+        <strong>Industry</strong> and <strong>CMP</strong>) and load the CSV to add live prices,
+        sector and fundamentals to every dashboard.
+      </p>
+      <input type="file" id="mdfile" accept=".csv,text/csv"
+             style="font-size:12px;width:100%;margin-bottom:8px">
+      <button onclick="importMarketData()" id="mdbtn"
+              style="background:#f1f5f9;color:#334155;padding:9px 16px;border-radius:8px;border:none;font-size:12px;font-weight:600;cursor:pointer;width:100%;font-family:inherit">
+        Import CSV
+      </button>
+      <pre id="mdresult" style="display:none;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-top:8px;white-space:pre-wrap;word-break:break-word;max-height:170px;overflow-y:auto;font-family:ui-monospace,monospace;color:#334155"></pre>
+    </div>
 </div>
 
 <script>
 document.getElementById('cname').addEventListener('keypress', function(e) {
     if(e.key === 'Enter') createClient();
 });
+
+// ── Screener.in market data ────────────────────────────────────────────────
+function showMarketStatus() {
+  fetch('/api/market/status')
+    .then(r => r.json())
+    .then(d => {
+      const el = document.getElementById('mdstatus');
+      if (!d.loaded) { el.innerText = 'not loaded'; return; }
+      const when = d.as_of ? new Date(d.as_of).toLocaleString('en-IN') : 'unknown date';
+      el.innerText = `${d.universe_size} securities · ${when}`;
+      el.style.color = '#16a34a';
+    })
+    .catch(() => { document.getElementById('mdstatus').innerText = 'unavailable'; });
+}
+showMarketStatus();
+
+async function importMarketData() {
+  const input = document.getElementById('mdfile');
+  const btn = document.getElementById('mdbtn');
+  const out = document.getElementById('mdresult');
+  if (!input.files.length) return alert('Choose a Screener CSV export first.');
+
+  btn.disabled = true;
+  btn.innerText = 'Importing…';
+  out.style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+
+  try {
+    const res = await fetch('/api/market/import', { method: 'POST', body: fd });
+    const body = await res.json();
+    if (!res.ok) {
+      // FastAPI puts the reason in "detail" — show it rather than a generic failure
+      out.innerText = 'Import failed\n\n' + (body.detail || JSON.stringify(body, null, 2));
+    } else {
+      const ignored = body.ignored_columns || [];
+      out.innerText =
+        `Imported ${body.rows_imported} securities (header on line ${body.header_row}).\n\n` +
+        `Recognised: ${Object.keys(body.recognised_columns).join(', ')}\n\n` +
+        (ignored.length ? `Ignored columns: ${ignored.join(', ')}\n\n` : '') +
+        body.note;
+      showMarketStatus();
+    }
+  } catch (e) {
+    out.innerText = 'Network error: ' + e;
+  }
+
+  out.style.display = 'block';
+  btn.disabled = false;
+  btn.innerText = 'Import CSV';
+}
 
 async function createClient() {
   const name = document.getElementById('cname').value.trim();

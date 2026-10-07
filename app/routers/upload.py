@@ -22,6 +22,7 @@ def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     client_id: int = Form(...),
+    trigger_analysis: bool = Form(True),
     db: Session = Depends(get_db)
 ):
     # 1. Validate client
@@ -29,15 +30,18 @@ def upload_file(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # 2. Save file to disk
+    # 2. Save file to disk (basename only — a client-supplied name must not escape UPLOAD_DIR)
+    safe_name = os.path.basename(file.filename or "upload")
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    file_path = os.path.join(UPLOAD_DIR, safe_name)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     # 3. Parse (PDF or Excel -> ParsedDocument)
     try:
-        parsed = detect_and_parse(file_path, file.filename)
+        parsed = detect_and_parse(file_path, safe_name)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse: {e}")
 
@@ -45,7 +49,7 @@ def upload_file(
     account = db.execute(
         select(Account).where(
             Account.client_id == client.id,
-            Account.source_file == file.filename
+            Account.source_file == safe_name
         )
     ).scalars().first()
 
@@ -55,7 +59,7 @@ def upload_file(
             db.delete(h)
         account.account_type = parsed.account_type
         account.portfolio_name = parsed.portfolio_name
-        account.source_file = file.filename
+        account.source_file = safe_name
         account.statement_date = parsed.statement_date
         account.has_cost_data = parsed.has_cost_data
         account.raw_markdown = parsed.raw_markdown
@@ -71,7 +75,7 @@ def upload_file(
             account_type=parsed.account_type,
             account_number=parsed.account_number,
             portfolio_name=parsed.portfolio_name,
-            source_file=file.filename,
+            source_file=safe_name,
             statement_date=parsed.statement_date,
             has_cost_data=parsed.has_cost_data,
             raw_markdown=parsed.raw_markdown,
@@ -82,15 +86,38 @@ def upload_file(
     db.commit()
     db.refresh(account)
 
-    # 5. Sector categorization via LLM for unknowns
+    # 4b. Screen out aggregate rows using the NSE + BSE masters. A row that is on
+    #     neither exchange, carries no ISIN and is not recognisable as a fund,
+    #     bond or cash line is a total ("Net Worth", "Stocks"), not a holding.
+    dropped_rows = []
+    try:
+        from app.screener_scraper import SymbolResolver
+        from app.instrument_check import screen_holdings
+        resolver = SymbolResolver.load()
+        parsed.holdings, dropped_rows = screen_holdings(parsed.holdings, resolver)
+        for holding, why in dropped_rows:
+            log.info("Excluded non-holding row %r (%.2f): %s",
+                     holding.security_name, holding.current_value, why)
+    except Exception as e:
+        # The masters are an extra safety net; never fail an upload over them
+        log.warning(f"Listing screen unavailable, keeping all parsed rows: {e}")
+
+    # 5. Sector categorization: deterministic map first, LLM only for what's left
+    for ph in parsed.holdings:
+        if ph.sector == "Unknown":
+            mapped = lookup_sector(ph.security_name)[0]
+            if mapped != "Others":
+                ph.sector = mapped
+
     unknown_names = [ph.security_name for ph in parsed.holdings if ph.sector == "Unknown"]
     llm_sectors = _categorize_sectors(unknown_names) if unknown_names else {}
 
     # 6. Save Holdings
     for ph in parsed.holdings:
         sector = ph.sector
-        if sector == "Unknown" and ph.security_name in llm_sectors:
-            sector = llm_sectors[ph.security_name].get("sector", "Others")
+        if sector == "Unknown":
+            entry = llm_sectors.get(ph.security_name)
+            sector = entry.get("sector", "Others") if isinstance(entry, dict) else "Others"
 
         db.add(Holding(
             account_id=account.id,
@@ -100,21 +127,50 @@ def upload_file(
             gain_pct=ph.gain_pct,
             weight_pct=ph.weight_pct,
             sector=sector,
+            # Store "" as NULL so "has no ISIN" is one value, not two
+            isin=getattr(ph, "isin", "") or None,
+            quantity=getattr(ph, "quantity", 0) or None,
+            nse_symbol=getattr(ph, "nse_symbol", "") or None,
+            bse_code=getattr(ph, "bse_code", "") or None,
         ))
 
     db.commit()
 
-    # 7. Fire background LLM tasks
-    background_tasks.add_task(_generate_llm_payloads, account.id)
+    # 7. Fire background LLM tasks (only on the last file of a batch).
+    #    The frontend uploads sequentially and sets trigger_analysis on the final
+    #    file, so this one task must cover every account still awaiting analysis —
+    #    /api/overview reports is_processing until all of them are done.
+    if trigger_analysis:
+        background_tasks.add_task(_analyze_pending_accounts, client.id)
+        # 8. Then refresh Screener prices + fundamentals for this client's
+        #    holdings, so the checklist is populated without a manual run.
+        #    Controlled by SCREENER_AUTO_REFRESH; already-fresh prices are skipped.
+        background_tasks.add_task(_refresh_market_data, client.id)
 
     return {
         "status": "success",
-        "message": f"Parsed {len(parsed.holdings)} holdings from {file.filename}",
+        "message": f"Parsed {len(parsed.holdings)} holdings from {safe_name}",
         "client_id": client.id,
         "account_id": account.id,
         "has_cost_data": parsed.has_cost_data,
         "holdings_count": len(parsed.holdings),
+        "excluded_rows": [
+            {"name": h.security_name, "value": h.current_value, "reason": why}
+            for h, why in dropped_rows
+        ],
     }
+
+
+# ── Background: Screener market data ──
+
+def _refresh_market_data(client_id: int):
+    """Fetch CMP and fundamentals for every holding of a client."""
+    try:
+        from app.market_refresh import refresh_client_background
+        refresh_client_background(client_id)
+    except Exception as e:
+        # Market data is an enrichment; never let it surface as an upload failure
+        log.error(f"Market refresh failed for client {client_id}: {e}")
 
 
 # ── Helper: Sector Categorization ──
@@ -133,7 +189,10 @@ def _categorize_sectors(names: list[str]) -> dict:
     )
     try:
         resp = call_llm("You return valid JSON.", prompt)
-        return json.loads(resp)
+        if not resp:
+            return {}
+        data = json.loads(resp)
+        return data if isinstance(data, dict) else {}
     except Exception as e:
         log.warning(f"Sector LLM failed: {e}")
         return {}
@@ -141,6 +200,24 @@ def _categorize_sectors(names: list[str]) -> dict:
 
 # ── Background: Generate LLM JSON payloads ──
 # Uses the EXACT prompts proven to work in test_overview_llm.py and test_performance_llm.py
+
+def _analyze_pending_accounts(client_id: int):
+    """Run the LLM payload generation for every account of a client that lacks it."""
+    db = next(get_db())
+    try:
+        pending = db.execute(
+            select(Account).where(Account.client_id == client_id)
+        ).scalars().all()
+        account_ids = [a.id for a in pending if a.overview_json is None]
+    except Exception as e:
+        log.error(f"Could not list accounts for client {client_id}: {e}")
+        return
+    finally:
+        db.close()
+
+    for aid in account_ids:
+        _generate_llm_payloads(aid)
+
 
 def _generate_llm_payloads(account_id: int):
     from app.llm import call_llm, call_llm_json

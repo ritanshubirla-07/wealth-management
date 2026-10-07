@@ -104,14 +104,122 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 /* ═══════════════════════ BOTTOM ROW ═══════════════════════ */
 .bot{display:grid;grid-template-columns:1.1fr .95fr 1fr;gap:14px;margin-bottom:18px}
 
-/* Holdings table */
-.ht{width:100%;border-collapse:collapse}
-.ht th{text-align:left;font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:6px 0;border-bottom:1px solid #f1f5f9}
-.ht td{padding:9px 0;font-size:12.5px;color:#334155;border-bottom:1px solid #f8fafc}
+/* ── Data tables ──────────────────────────────────────────────────────────
+   Alignment follows financial-reporting convention rather than one blanket
+   rule: labels read left, figures right so their decimals line up down the
+   column, and short status/index cells sit centred.                        */
+.ht{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.ht th{text-align:left;font-size:9.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;
+       letter-spacing:.6px;padding:0 14px 8px;border-bottom:1px solid #e8ecf1;white-space:nowrap}
+.ht td{padding:10px 14px;text-align:left;vertical-align:middle;font-size:12.5px;color:#334155;
+       border-bottom:1px solid #f4f7fa}
+/* Flush with the card edge so the table reads as part of the card */
+.ht th:first-child,.ht td:first-child{padding-left:0}
+.ht th:last-child,.ht td:last-child{padding-right:0}
 .ht tr:last-child td{border-bottom:none}
-.hn{display:flex;align-items:center;gap:7px}
+/* Figures: right-aligned, never wrapped */
+.ht th.num,.ht td.num{text-align:right;white-space:nowrap}
+.ht th.ctr,.ht td.ctr{text-align:center}
+.hn{display:flex;align-items:center;gap:7px;text-align:left}
+
+/* Expandable holding rows + per-stock fundamental checklist */
+.h-row{cursor:pointer;transition:background .12s}
+.h-row:hover{background:#f8fafc}
+.chev{display:inline-block;width:10px;color:#94a3b8;font-size:10px;transition:color .12s}
+.h-row:hover .chev{color:#2563eb}
+.h-detail td{padding:0 !important;border-bottom:1px solid #e2e8f0 !important}
+
+/* ── Checklist panel ── */
+.chk-wrap{padding:18px 20px 22px;border-top:1px solid #e2e8f0}
+.chk-hd{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:3px}
+.chk-hd h4{font-size:13px;font-weight:700;color:#0f172a;margin:0}
+.chk-hd .chk-code{font-size:11px;color:#64748b;font-weight:500}
+.chk-tally{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 12px}
+.chk-pill{font-size:10px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.chk-src{font-size:10px;color:#94a3b8;line-height:1.55;margin-bottom:14px;max-width:760px}
+
+.chk-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+.chk-t{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;
+       font-size:11.5px;font-variant-numeric:tabular-nums}
+/* Labels left, index and status centred — the same convention as above */
+.chk-t th{text-align:left;font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;
+          letter-spacing:.6px;padding:10px 16px;background:#f8fafc;
+          border-bottom:1px solid #e2e8f0;white-space:nowrap}
+.chk-t td{padding:11px 16px;text-align:left;vertical-align:top;line-height:1.55;
+          border-bottom:1px solid #f1f5f9}
+.chk-t tbody tr:last-child td{border-bottom:none}
+
+.chk-t th.ctr,.chk-t td.ctr{text-align:center}
+.chk-t .c-sr{text-align:center;color:#94a3b8;font-size:10.5px;font-weight:600;
+             padding-left:0;padding-right:0;border-left:3px solid transparent}
+.chk-t .c-param{font-weight:600;color:#0f172a}
+.chk-t .c-assume{color:#64748b}
+.chk-t .c-out{font-weight:600;color:#0f172a;font-variant-numeric:tabular-nums}
+.chk-t .c-score{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+.chk-t .c-rmk{text-align:center;white-space:nowrap}
+
+/* Class blocks: Growth / Quality / Ownership / Valuation */
+.vm-class{margin-bottom:16px}
+.vm-class:last-child{margin-bottom:0}
+.vm-class-hd{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+             padding:9px 14px;border:1px solid #e2e8f0;border-bottom:none;
+             border-radius:8px 8px 0 0}
+.vm-class-name{font-size:12px;font-weight:700;letter-spacing:.3px;text-transform:uppercase}
+.vm-class-score{font-size:13px;font-weight:700;color:#0f172a;font-variant-numeric:tabular-nums}
+.vm-bar{flex:1;min-width:90px;height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden}
+.vm-bar-fill{display:block;height:100%;border-radius:3px}
+.vm-class-pct{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.vm-na{font-size:10px;color:#94a3b8}
+.vm-class .chk-scroll{border-radius:0 0 8px 8px;border-top:none}
+.vm-total{font-size:11.5px;color:#64748b;font-variant-numeric:tabular-nums}
+.vm-total strong{color:#0f172a;font-size:13px}
+
+/* Status shown as a stripe + badge, so the row itself stays white and legible */
+tr.st-pass    .c-sr{border-left-color:#16a34a}
+tr.st-fail    .c-sr{border-left-color:#dc2626}
+tr.st-info    .c-sr{border-left-color:#0284c7}
+tr.st-manual  .c-sr{border-left-color:#d97706}
+tr.st-no_data .c-sr{border-left-color:#cbd5e1}
+.chk-t tbody tr:hover td{background:#f8fafc}
+
+.chk-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;
+           letter-spacing:.3px;padding:3px 8px;border-radius:999px;margin-top:3px}
+.chk-mark{font-size:13px;font-weight:700;line-height:1;display:block}
+
+/* Method notes live in a hover tooltip, flagged by a small marker, rather than
+   as a visible line under every parameter */
+.chk-info{display:inline-block;margin-left:5px;color:#94a3b8;font-size:11px;cursor:help;
+          font-weight:400;vertical-align:1px}
+.chk-t tr:hover .chk-info{color:#2563eb}
+
+/* Section divider (Valuation) */
+tr.chk-sec td{background:#f1f5f9;font-size:9.5px;font-weight:700;color:#475569;
+              text-transform:uppercase;letter-spacing:.7px;padding:8px 16px;
+              text-align:left;border-bottom:1px solid #e2e8f0;border-top:1px solid #e2e8f0}
+
+@media (max-width:640px){
+  .chk-wrap{padding:14px 12px 18px}
+  .chk-t th,.chk-t td{padding:8px 10px}
+}
 .hi{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;flex-shrink:0}
 .hl{font-size:12.5px;font-weight:500;color:#1e293b}
+
+/* Industry tag beside a holding. Sits a step quieter than the company name so
+   the name still leads: smaller, lighter weight, tinted rather than filled.
+   Colour comes from SECTOR_STYLE inline, since the sector is per-row data. */
+.ind-tag{
+  display:inline-block;flex-shrink:0;max-width:170px;
+  padding:1.5px 7px;border:1px solid transparent;border-radius:11px;
+  font-size:10px;font-weight:600;line-height:1.5;letter-spacing:.2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  vertical-align:middle;cursor:help;
+}
+/* The name may wrap on a narrow screen; the tag drops below it rather than
+   squeezing the name into a single character column. */
+@media (max-width:760px){
+  .hn{flex-wrap:wrap;gap:5px 7px}
+  .ind-tag{max-width:120px;font-size:9.5px}
+}
 td.tv{font-weight:600;color:#1e293b}
 td.tw{color:#94a3b8}
 td.tg{font-weight:600}

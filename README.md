@@ -34,6 +34,14 @@ To prevent LLM degradation from massive prompt context, VIKABH splits the AI rea
 ### 4. Zero-Latency Dashboard
 LLMs take 15-20 seconds to run. The FastAPI backend orchestrates uploads sequentially and runs the LLM calls in a background thread, saving the outputs to an `AnalysisCache` SQLite table. The Vanilla JS frontend polls this state and loads instantly once the cache is populated.
 
+### 5. Screener.in Market Data Enrichment
+Statements are a snapshot of one date. Loading a **Screener.in CSV export** marks every matched holding to its live price and attaches sector, market-cap tier and fundamentals (P/E, ROE, ROCE, debt/equity, dividend yield, growth).
+
+* **No API, by design:** Screener.in does not offer a public API. The premium **Export** button produces a CSV, and that is what the app ingests — no credentials are stored and nothing breaks when Screener changes its HTML.
+* **Format-tolerant ingestion:** you choose up to 50 columns in Screener, so column names are matched by rule rather than position. Any preamble rows are skipped, unrecognised columns are preserved verbatim in `extras_json`, and the import response lists exactly what was recognised and ignored.
+* **Conservative matching:** holdings join to market data by ISIN first, then exchange code, then a normalised company name. A name that two companies share is reported as unmatched rather than guessed at.
+* **Honest partial figures:** a holding is revalued only when both a price *and* a share quantity are known. The API returns `live_value_partial` with `priced_holdings` alongside it, and the UI labels it as a partial figure rather than presenting it as a portfolio total.
+
 ---
 
 ## 🏗️ System Architecture
@@ -67,12 +75,12 @@ cd wealth-management
 ### 2. Set Up the Virtual Environment
 Ensure you have Python 3.11+ installed.
 ```bash
-python -m venv venv
+python -m venv .venv
 
-# Windows
-venv\Scripts\activate
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
 # Mac/Linux
-source venv/bin/activate
+source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
@@ -93,7 +101,7 @@ LLM_MODEL=llama-3.3-70b-instruct
 ### 4. Boot the Server
 Start the FastAPI server. The SQLite database (`VIKABH.db`) will automatically initialize on startup.
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ---
@@ -109,6 +117,66 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ---
 
+## 📈 Loading Screener.in Market Data
+
+Market data is shared across every client, so it is loaded once from the home page rather than per client.
+
+### 1. Export from Screener
+1. Open any screen on [screener.in](https://www.screener.in/) — to cover a whole portfolio, a query as broad as `Market Capitalization > 0` works.
+2. Use **edit columns** to include at least **Name**, **NSE Code**, **Industry** and **CMP**. Add whatever else you want surfaced: **Mar Cap**, **P/E**, **ROE %**, **ROCE %**, **Debt / Eq**, **Div Yld %**, **Qtr Sales Var %**, **Qtr Profit Var %**.
+3. Click **Export** (premium only) to download the CSV.
+
+### 2. Load it
+On `http://localhost:8000/`, use the **Screener.in market data** panel: choose the CSV and click **Import CSV**. The result panel reports how many securities loaded and which columns were recognised or ignored — check this first if a dashboard column comes out empty.
+
+Equivalent API call:
+```bash
+curl -X POST http://localhost:8000/api/market/import -F "file=@screener_export.csv"
+```
+
+### Alternative: fetch CMP automatically
+`scripts/fetch_cmp.py` pulls the current price for every stock you hold straight from Screener's public company pages, so prices can be refreshed without a manual export.
+
+```bash
+python -m scripts.fetch_cmp                  # every holding in the database
+python -m scripts.fetch_cmp --client 17      # one client
+python -m scripts.fetch_cmp --dry-run        # resolve symbols, fetch nothing
+python -m scripts.fetch_cmp --max-age 30     # skip anything priced in the last 30 min
+python -m scripts.fetch_cmp --delay 3        # be gentler (default 2s between requests)
+```
+
+How it stays well-behaved:
+
+* **Public pages only** — it requests `/company/<CODE>/` and nothing else. No login, no session cookie, no premium credentials, so a scraping mistake cannot expose or burn your account.
+* **robots.txt is enforced in code.** Screener disallows `/*?q=` (its search endpoint), `/*?sort=`, `/*?limit=`, `/*?page=`, `/user/*` and `/company/source/quarter/*`. Every URL is checked with `urllib.robotparser` before it is fetched, and the run aborts if robots.txt cannot be read at all.
+* **Symbols come from NSE, not Screener search.** Because search is disallowed, ISIN → ticker resolution uses [NSE's published equity master](https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv), cached in `data/` and refreshed weekly. Your demat statements already carry ISINs.
+* **One request at a time, spaced out.** No concurrency, a configurable delay, exponential backoff, and `Retry-After` respected on HTTP 429/503.
+* **A failure never becomes a number.** If `Current Price` cannot be found the security is reported as failed and the old price is left untouched — a parse break can never silently write a wrong or zero price.
+* **Duplicate work is skipped.** One page fetch per security even when it is held in several accounts, and `--max-age` avoids refetching recent prices.
+
+Resolution is imperfect by nature: mutual funds, bonds, delisted names and cash lines have no Screener equity page, and the run lists each one with the reason. Prices on the page are shown to Screener's own precision (whole rupees for large caps, decimals for small ones), so a market value can differ from a broker's by a fraction of a percent.
+
+### 3. Check coverage
+```bash
+curl "http://localhost:8000/api/market/coverage/<client_id>"
+```
+This lists which holdings matched and how (`isin`, `code` or `name`) plus every holding that did not, so you can see what needs a broader export.
+
+### Endpoints
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/market/import` | Ingest a Screener CSV. `?replace=false` merges instead of replacing the universe. |
+| `GET /api/market/status` | Universe size, source file and import timestamp. |
+| `GET /api/market/coverage/{client_id}` | Per-holding match report, including unmatched holdings. |
+
+### Things worth knowing
+* **Prices are as fresh as your last export.** Nothing refreshes automatically; `GET /api/market/status` reports the timestamp and the home page shows it.
+* **Revaluation needs a share quantity.** Demat and PMS statements carry one, so those revalue. Holdings uploaded before this feature existed have no stored quantity and must be re-uploaded to revalue.
+* **Market-cap tiers are rank-based.** SEBI/AMFI define large cap as the top 100 companies by market cap, mid as 101–250, small as 251+. Tiers are ranked over *the rows you imported*, so they are only meaningful if the export covered a broad universe — a 25-row screen will label everything "Large Cap".
+* **ISIN is the reliable join key.** Demat statements include it and it is stored per holding. PMS and mutual-fund statements usually do not, so those fall back to name matching — which is why the coverage endpoint exists.
+
+---
+
 ## 📂 Project Structure
 
 ```text
@@ -117,13 +185,13 @@ wealth-management/
 │   ├── main.py              # FastAPI application & static mounting
 │   ├── database.py          # SQLite connection and session maker
 │   ├── models.py            # SQLAlchemy ORM definitions (Client, Account, Holding, Cache)
-│   ├── analysis.py          # Pure math calculations (HHI, Weighted Avg)
 │   ├── llm.py               # AI orchestration and prompt engineering
-│   ├── routers/             # API Endpoints (Upload, Overview, Portfolio, etc.)
-│   └── parsers/             # PyMuPDF extraction logic
-│       ├── detector.py      # Factory router for PDFs
-│       ├── demat.py         # Standard NSDL/CDSL parsers
-│       └── pms.py           # Custom PMS format parsers
+│   ├── market_data.py       # Screener.in CSV parsing + holding matching
+│   ├── sector_map.py        # Deterministic sector / market-cap lookup
+│   ├── routers/             # API Endpoints (Upload, Overview, Portfolio, Market, etc.)
+│   └── parsers/             # Statement extraction logic
+│       ├── detector.py      # Format detection, header mapping, holding building
+│       └── excel.py         # Spreadsheet statements (delegates to detector)
 ├── frontend/                # Zero-dependency SPA
 │   ├── clients.html         # Client CRUD UI
 │   ├── upload.html          # Drag-and-Drop & Polling UI
