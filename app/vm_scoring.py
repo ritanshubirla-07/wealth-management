@@ -26,7 +26,13 @@ partial credit. Every row reports the measured value alongside its score so a
 number can always be traced back. Every score is rounded to the nearest 0.5.
 
 Sales and profit growth use the **average of the 1Y, 3Y and 5Y CAGRs**, as
-requested, rather than a single long-horizon figure.
+requested, rather than a single long-horizon figure. PEG divides the P/E by
+**EPS** growth on that same 1Y/3Y/5Y basis, not by profit growth: the two
+diverge whenever the share count moves, and only the per-share figure is what
+a shareholder actually earns.
+
+Promoter holding is scored in bands rather than against one cut-off — under
+20% nothing, then 0.5 per 20 points up to the full 2 at 80%+.
 
 A parameter that cannot be measured from Screener's data — promoter salary, a
 credit rating, segment mix — scores ``None`` and is reported as "not assessed".
@@ -50,7 +56,11 @@ TAX_TARGET = 30.0          # parameter 3
 ICR_TARGET = 3.0           # parameter 4
 DE_TARGET = 0.5            # parameter 5
 CURRENT_RATIO_TARGET = 1.25  # parameter 6
-PROMOTER_TARGET = 51.0     # parameter 21
+# Parameter 21. Promoter holding is scored in bands rather than against a single
+# cut-off: the difference between a 25% and a 75% promoter stake is a difference
+# of degree, and a pass/fail at one threshold threw that away. Read as
+# "at least this %, score this"; a boundary value takes the higher band.
+PROMOTER_BANDS = ((80.0, 2.0), (60.0, 1.5), (40.0, 1.0), (20.0, 0.5))
 # Parameter 29 (PE Ratio): below this the score tapers off gradually, but
 # above it the stock is treated as expensive outright and scores zero,
 # overriding the gradient.
@@ -59,6 +69,16 @@ PE_ZERO_AT = 25.0
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+def _promoter_score(pct: Optional[float]) -> Optional[float]:
+    """Band a promoter stake onto the 0 - 2 scale. None when not disclosed."""
+    if pct is None:
+        return None
+    for floor, score in PROMOTER_BANDS:
+        if pct >= floor:
+            return score
+    return 0.0
 
 
 def _share_meeting(series: list, predicate) -> Optional[float]:
@@ -397,9 +417,11 @@ def evaluate(fundamentals: dict, market=None, yahoo: dict = None) -> dict:
 
     promoter_series = [v for v in f.row("shareholding", "Promoters", drop_ttm=False) if v is not None]
     promoter = promoter_series[-1] if promoter_series else None
-    out.add(21, OWNERSHIP, "Promoter Holding", f"> {PROMOTER_TARGET:g}% (higher the better)",
+    out.add(21, OWNERSHIP, "Promoter Holding", "Higher the better (banded)",
             _fmt(promoter, "%"),
-            None if promoter is None else (2.0 if promoter >= PROMOTER_TARGET else 0.0), 2)
+            _promoter_score(promoter), 2,
+            "Scored in bands: under 20% none, 20-40% 0.5, 40-60% 1, "
+            "60-80% 1.5, 80%+ the full 2.")
 
     out.add(22, OWNERSHIP, "Promoter Buying Shares", "Insider buying (open-market purchases)",
             "Not assessed", None, 3,
@@ -437,19 +459,29 @@ def evaluate(fundamentals: dict, market=None, yahoo: dict = None) -> dict:
             None if pb is None else (1.0 if pb < 1 else 0.0), 1,
             f"CMP {_fmt(price)} / book value per share {_fmt(book_value)}.")
 
-    peg = None
-    if pe and profit_avg and profit_avg > 0:
-        peg = pe / profit_avg
+    # PEG is P/E over the EPS growth rate, not over profit growth. The two part
+    # company whenever the share count moves: a placement or a QIP grows profit
+    # while diluting it per share, and dividing by profit growth would then
+    # flatter exactly the companies that issued stock to buy it.
+    eps_annual = f.row("profit_loss", "EPS in Rs")          # full years only
+    eps_parts = [p for p in (_cagr(eps_annual, 1), _cagr(eps_annual, 3),
+                             _cagr(eps_annual, 5)) if p is not None]
+    eps_growth = (sum(eps_parts) / len(eps_parts)) if eps_parts else None
+
+    peg = (pe / eps_growth) if (pe and eps_growth and eps_growth > 0) else None
+    growth_note = ("EPS CAGR averaged over 1Y/3Y/5Y: "
+                   + ", ".join(_fmt(p, '%', 1) for p in eps_parts) if eps_parts else "")
     if peg is None:
+        reason = ("EPS growth is not positive, so PEG carries no meaning."
+                  if (eps_growth is not None and eps_growth <= 0)
+                  else "Needs a positive P/E and at least two years of EPS.")
         out.add(31, VALUATION, "PEG Ratio", "< 1",
-                "Not meaningful" if (profit_avg is not None and profit_avg <= 0) else "n/a",
-                None if (profit_avg is None or pe is None) else 0.0, 3,
-                "PEG is undefined when earnings growth is not positive."
-                if (profit_avg is not None and profit_avg <= 0) else "")
+                "Not meaningful" if (eps_growth is not None and eps_growth <= 0) else "n/a",
+                None if (eps_growth is None or pe is None) else 0.0, 3, reason)
     else:
         out.add(31, VALUATION, "PEG Ratio", "< 1", _fmt(peg),
                 3.0 if peg < 1 else 0.0, 3,
-                "P/E divided by the average of the 1Y/3Y/5Y profit CAGRs.")
+                f"P/E {_fmt(pe)} / EPS growth {_fmt(eps_growth, '%', 1)}. {growth_note}")
 
     earnings_yield = (ttm_eps / price * 100) if (price and ttm_eps) else None
     out.add(32, VALUATION, "Earnings Yield", f">= 10Y G-Sec ({GSEC_10Y_YIELD:g}%)",
