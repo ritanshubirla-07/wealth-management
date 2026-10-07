@@ -70,8 +70,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 
 /* Performance chart */
 .pf-hdr{display:flex;justify-content:space-between;align-items:center;width:100%}
-.pf-tabs button.on{background:#fff;color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,.08)}
-.pf-tabs button:hover:not(.on){color:#64748b}
 .chwrap{height:195px;position:relative}
 .chwrap canvas{width:100%!important;height:100%!important}
 
@@ -100,61 +98,83 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .h-row:hover .chev{color:#2563eb}
 .h-detail td{padding:0 !important;border-bottom:1px solid #e2e8f0 !important}
 
-/* ── Checklist panel ── */
-.chk-wrap{padding:18px 20px 22px;border-top:1px solid #e2e8f0}
-.chk-hd{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:3px}
-.chk-hd h4{font-size:13px;font-weight:700;color:#0f172a;margin:0}
-.chk-hd .chk-code{font-size:11px;color:#64748b;font-weight:500}
-.chk-src{font-size:10px;color:#94a3b8;line-height:1.55;margin-bottom:14px;max-width:760px}
+/* ── Fundamental scorecard ──────────────────────────────────────────────────
+   One hero figure, the four pillars as meters in a 2x2, and the parameters
+   behind progressive disclosure. Only one pillar opens at a time, so the row
+   never unrolls into 34 lines at once. */
+.vm-wrap{padding:20px 22px 24px;border-top:1px solid #e2e8f0;background:#fff}
 
-.chk-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
-.chk-t{width:100%;min-width:720px;border-collapse:separate;border-spacing:0;
-       font-size:11.5px;font-variant-numeric:tabular-nums}
-/* Labels left, index and status centred — the same convention as above */
-.chk-t th{text-align:left;font-size:9.5px;color:#64748b;font-weight:700;text-transform:uppercase;
-          letter-spacing:.6px;padding:10px 16px;background:#f8fafc;
-          border-bottom:1px solid #e2e8f0;white-space:nowrap}
-.chk-t td{padding:11px 16px;text-align:left;vertical-align:top;line-height:1.55;
-          border-bottom:1px solid #f1f5f9}
-.chk-t tbody tr:last-child td{border-bottom:none}
+/* The meter: fill carries severity, track is a lighter step of the same hue,
+   so state reads across the whole bar and not just where the fill stops. */
+.vm-meter{display:block;height:6px;border-radius:3px;overflow:hidden}
+.vm-meter-fill{display:block;height:100%;border-radius:3px;transition:width .25s ease}
 
-.chk-t th.ctr,.chk-t td.ctr{text-align:center}
-.chk-t .c-sr{text-align:center;color:#94a3b8;font-size:10.5px;font-weight:600;
-             padding-left:0;padding-right:0;border-left:3px solid transparent}
-.chk-t .c-param{font-weight:600;color:#0f172a}
-.chk-t .c-assume{color:#64748b}
-.chk-t .c-out{font-weight:600;color:#0f172a;font-variant-numeric:tabular-nums}
-.chk-t .c-score{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Hero: the one number the panel leads with. Proportional figures, not tabular,
+   because tabular makes a standalone number look loose at display sizes. */
+.vm-hero{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap;margin-bottom:18px}
+.vm-hero-l{flex-shrink:0;min-width:104px}
+.vm-hero-num{font-size:46px;font-weight:700;line-height:1;letter-spacing:-1.5px}
+.vm-hero-pc{font-size:22px;font-weight:600;margin-left:1px}
+.vm-hero-sub{font-size:11px;color:#64748b;margin-top:5px;font-variant-numeric:tabular-nums}
+.vm-hero-r{flex:1;min-width:240px}
+.vm-hero-name{font-size:14px;font-weight:700;color:#0f172a;line-height:1.3}
+.vm-hero-meta{font-size:10.5px;color:#94a3b8;margin:3px 0 9px}
+.vm-hero-meter{margin-bottom:7px}
+.vm-hero-note{font-size:10.5px;color:#64748b;line-height:1.5}
 
-/* Class blocks: Growth / Quality / Ownership / Valuation */
-.vm-class{margin-bottom:16px}
-.vm-class:last-child{margin-bottom:0}
-.vm-class-hd{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
-             padding:9px 14px;border:1px solid #e2e8f0;border-bottom:none;
-             border-radius:8px 8px 0 0}
-.vm-class-name{font-size:12px;font-weight:700;letter-spacing:.3px;text-transform:uppercase}
-.vm-class-score{font-size:13px;font-weight:700;color:#0f172a;font-variant-numeric:tabular-nums}
-.vm-bar{flex:1;min-width:90px;height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden}
-.vm-bar-fill{display:block;height:100%;border-radius:3px}
-.vm-class-pct{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
-.vm-na{font-size:10px;color:#94a3b8}
-.vm-class .chk-scroll{border-radius:0 0 8px 8px;border-top:none}
-.vm-total{font-size:11.5px;color:#64748b;font-variant-numeric:tabular-nums}
-.vm-total strong{color:#0f172a;font-size:13px}
+/* The four pillars */
+.vm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.vm-card{display:flex;flex-direction:column;gap:8px;width:100%;text-align:left;
+         padding:12px 14px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;
+         font:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.vm-card:hover{border-color:#cbd5e1;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.vm-card:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.vm-card.on{border-color:#94a3b8;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.vm-card-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.vm-card-name{font-size:11px;font-weight:700;color:#0f172a;letter-spacing:.4px;text-transform:uppercase}
+.vm-card-score{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.vm-card-max{font-size:11px;font-weight:600;color:#94a3b8}
+.vm-card-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.vm-card-word{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.vm-card-n{font-size:10px;color:#94a3b8;display:flex;align-items:center;gap:4px}
+.vm-caret{display:inline-block;font-size:8px;transition:transform .18s}
+.vm-card.on .vm-caret{transform:rotate(180deg)}
 
-/* Status shown as a stripe + badge, so the row itself stays white and legible */
-tr.st-info    .c-sr{border-left-color:#0284c7}
-tr.st-manual  .c-sr{border-left-color:#d97706}
-tr.st-no_data .c-sr{border-left-color:#cbd5e1}
-.chk-t tbody tr:hover td{background:#f8fafc}
+/* Parameter detail, one pillar at a time */
+.vm-panel{margin-top:12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;
+          padding:4px 14px 10px}
+.vm-rows{list-style:none;margin:0;padding:0}
+.vm-row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 72px 56px;
+        gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid #e9eef4}
+.vm-row:last-child{border-bottom:none}
+.vm-row-main{min-width:0}
+.vm-row-name{display:block;font-size:11.5px;font-weight:600;color:#0f172a;line-height:1.35}
+.vm-row-crit{display:block;font-size:10px;color:#94a3b8;margin-top:1px}
+.vm-row-val{font-size:11px;color:#334155;font-variant-numeric:tabular-nums;
+            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vm-row-meter{display:block;height:5px;border-radius:3px;overflow:hidden}
+.vm-row-score{font-size:11.5px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.vm-row-max{font-size:10px;font-weight:600;color:#94a3b8}
+.vm-why{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;
+        margin-left:5px;border-radius:50%;background:#e2e8f0;color:#64748b;
+        font-size:9px;font-weight:700;cursor:help;vertical-align:1px}
+.vm-row:hover .vm-why{background:#cbd5e1;color:#334155}
+.vm-excl{font-size:10px;color:#94a3b8;line-height:1.55;margin:10px 0 2px}
+.vm-excl em{color:#64748b;font-style:normal}
 
-/* Method notes live in a hover tooltip, flagged by a small marker, rather than
-   as a visible line under every parameter */
-.chk-info{display:inline-block;margin-left:5px;color:#94a3b8;font-size:11px;cursor:help;
-          font-weight:400;vertical-align:1px}
-.chk-t tr:hover .chk-info{color:#2563eb}@media (max-width:640px){
-  .chk-wrap{padding:14px 12px 18px}
-  .chk-t th,.chk-t td{padding:8px 10px}
+@media (max-width:720px){
+  .vm-wrap{padding:16px 13px 18px}
+  .vm-grid{grid-template-columns:minmax(0,1fr)}
+  .vm-hero-num{font-size:38px}
+  /* 104 + 240 + the gap exceeds a 360px phone, so the hero takes a full line
+     of its own instead of forcing the panel wider than the screen */
+  .vm-hero{gap:12px}
+  .vm-hero-r{min-width:100%}
+  /* The value and its meter stack under the name rather than squeezing to nothing */
+  .vm-row{grid-template-columns:minmax(0,1fr) 52px;gap:7px 10px}
+  .vm-row-val{grid-column:1;font-size:10.5px}
+  .vm-row-meter{grid-column:1;align-self:center}
+  .vm-row-score{grid-row:1;grid-column:2}
 }
 .hl{font-size:12.5px;font-weight:500;color:#1e293b}
 

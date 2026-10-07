@@ -347,13 +347,6 @@ function renderOverview() {
 let checklistRows = [];          // holdings of the currently rendered table
 const checklistCache = {};       // security key -> API payload, fetched once
 
-const CLASS_STYLE = {
-  Growth:    {color: '#0e7490', bg: '#ecfeff', bar: '#06b6d4'},
-  Quality:   {color: '#15803d', bg: '#f0fdf4', bar: '#22c55e'},
-  Ownership: {color: '#b45309', bg: '#fffbeb', bar: '#f59e0b'},
-  Valuation: {color: '#6d28d9', bg: '#f5f3ff', bar: '#8b5cf6'}
-};
-
 // One hue per sector, so two holdings in the same business read as related at a
 // glance and the column scans as a group rather than a row of loose labels. Text
 // is the darkest step of each hue against its lightest tint, which keeps every
@@ -396,16 +389,6 @@ function attrEsc(text) {
   return escHtml(text).replace(/"/g, '&quot;');
 }
 
-// Score colour runs red -> amber -> green with the share of the max earned
-function scoreColour(score, max) {
-  if (score == null || !max) return '#94a3b8';
-  const r = score / max;
-  if (r >= 0.75) return '#16a34a';
-  if (r >= 0.5)  return '#65a30d';
-  if (r >= 0.25) return '#d97706';
-  return '#dc2626';
-}
-
 function toggleChecklist(idx) {
   const detail = document.getElementById(`detail-${idx}`);
   const chev = document.getElementById(`chev-${idx}`);
@@ -422,7 +405,7 @@ function toggleChecklist(idx) {
   const body = document.getElementById(`detail-body-${idx}`);
 
   if (checklistCache[key]) {
-    body.innerHTML = renderChecklist(checklistCache[key], h);
+    body.innerHTML = renderChecklist(checklistCache[key], h, idx);
     return;
   }
 
@@ -439,7 +422,7 @@ function toggleChecklist(idx) {
     })
     .then(data => {
       checklistCache[key] = data;
-      body.innerHTML = renderChecklist(data, h);
+      body.innerHTML = renderChecklist(data, h, idx);
     })
     .catch(e => {
       console.error('Checklist load failed:', e);
@@ -447,14 +430,50 @@ function toggleChecklist(idx) {
     });
 }
 
-function renderChecklist(data, holding) {
+// Meter tones. The fill carries severity and the track is a lighter step of the
+// same hue, so the state of a pillar reads across the whole bar rather than only
+// where it happens to stop. Every fill clears 3:1 on white and each is always
+// accompanied by its own number, so colour never carries the meaning alone.
+const TONE = {
+  good:     {fill: '#16a34a', track: '#dcfce7', ink: '#15803d', word: 'strong'},
+  mid:      {fill: '#d97706', track: '#fef3c7', ink: '#b45309', word: 'fair'},
+  low:      {fill: '#ea580c', track: '#ffedd5', ink: '#c2410c', word: 'weak'},
+  critical: {fill: '#dc2626', track: '#fee2e2', ink: '#b91c1c', word: 'poor'},
+  none:     {fill: '#cbd5e1', track: '#f1f5f9', ink: '#64748b', word: 'not scored'}
+};
+
+function scoreTone(score, max) {
+  if (score == null || !max) return TONE.none;
+  const r = score / max;
+  if (r >= 0.75) return TONE.good;
+  if (r >= 0.5) return TONE.mid;
+  if (r >= 0.25) return TONE.low;
+  return TONE.critical;
+}
+
+// Which pillar panel is open, per holding row, so opening one closes the other
+// three rather than unrolling all 34 parameters at once.
+const vmOpen = {};
+
+function toggleVmPillar(idx, name) {
+  const key = String(idx);
+  vmOpen[key] = vmOpen[key] === name ? null : name;
+  document.querySelectorAll('[data-vm-panel="' + idx + '"]').forEach(el => {
+    el.hidden = el.getAttribute('data-vm-name') !== vmOpen[key];
+  });
+  document.querySelectorAll('[data-vm-card="' + idx + '"]').forEach(el => {
+    const on = el.getAttribute('data-vm-name') === vmOpen[key];
+    el.classList.toggle('on', on);
+    el.setAttribute('aria-expanded', on ? 'true' : 'false');
+  });
+}
+
+function renderChecklist(data, holding, idx) {
   if (!data.found) {
     return `<div style="padding:18px;font-size:12px;color:#92400e;background:#fffbeb">
-      <strong>${holding.security_name}</strong> — ${data.reason}
+      <strong>${escHtml(holding.security_name)}</strong> &mdash; ${escHtml(data.reason)}
     </div>`;
   }
-
-  const attr = t => String(t || '').replace(/"/g, '&quot;');
 
   // Static files are re-read from disk on every request while the Python process
   // is only reloaded on restart, so this page can be newer than the API serving
@@ -463,8 +482,8 @@ function renderChecklist(data, holding) {
     return `<div style="padding:18px 20px;font-size:12px;color:#92400e;background:#fffbeb;line-height:1.6">
       <strong>The dashboard is newer than the running server.</strong><br>
       This page expects the Growth / Quality / Ownership / Valuation scorecard, but the
-      API still returns the older checklist format${data.summary ? ' (tick/cross)' : ''}.
-      Restart the API process to pick up the current code:
+      API still returns the older checklist format. Restart the API process to pick up
+      the current code:
       <div style="margin-top:8px;font-family:ui-monospace,monospace;font-size:11px;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:8px 10px">
         python -m uvicorn app.main:app --port 8000 --reload
       </div>
@@ -472,66 +491,91 @@ function renderChecklist(data, holding) {
   }
 
   const t = data.total;
-  const asOf = data.as_of ? new Date(data.as_of).toLocaleString('en-IN') : 'unknown';
+  const tone = scoreTone(t.score, t.max);
+  const asOf = data.as_of ? new Date(data.as_of).toLocaleDateString('en-IN',
+    {day: 'numeric', month: 'short', year: 'numeric'}) : 'unknown';
+  const totalParams = t.params + (t.excluded_params || 0);
+  const idxSafe = Number(idx) || 0;
 
-  // One block per class, in Growth / Quality / Ownership / Valuation order
-  const blocks = (data.classes || []).map(cl => {
-    const st = CLASS_STYLE[cl.name] || CLASS_STYLE.Quality;
+  // ── The four pillars, as meters in a 2x2 ─────────────────────────────────
+  const cards = (data.classes || []).map(cl => {
     const pct = cl.pct == null ? 0 : cl.pct;
-    const body = (cl.rows || []).map(r => {
-      const scored = r.score != null;
-      const colour = scoreColour(r.score, r.max);
-      return `
-        <tr${r.note ? ` title="${attr(r.note)}"` : ''}>
-          <td class="c-sr">${r.sr}</td>
-          <td class="c-param">${r.parameter}${r.note ? '<span class="chk-info">&#9432;</span>' : ''}</td>
-          <td class="c-assume">${r.criteria}</td>
-          <td class="c-out">${r.value}</td>
-          <td class="c-score">${scored
-            ? `<span style="color:${colour};font-weight:700">${r.score}</span><span style="color:#94a3b8"> / ${r.max}</span>`
-            : `<span style="color:#94a3b8">— / ${r.max}</span>`}</td>
-        </tr>`;
-    }).join('');
-
+    const ct = scoreTone(cl.score, cl.max);
+    const open = vmOpen[String(idxSafe)] === cl.name;
     return `
-      <div class="vm-class">
-        <div class="vm-class-hd" style="background:${st.bg};border-color:${st.color}22">
-          <span class="vm-class-name" style="color:${st.color}">${cl.name}</span>
-          <span class="vm-class-score">${cl.score} <span style="color:#94a3b8">/ ${cl.max}</span></span>
-          <span class="vm-bar"><span class="vm-bar-fill" style="width:${pct}%;background:${st.bar}"></span></span>
-          <span class="vm-class-pct" style="color:${st.color}">${pct}%</span>
-          ${cl.excluded_params ? `<span class="vm-na" title="${attr((cl.excluded_names || []).join(', '))}">${cl.excluded_params} not shown</span>` : ''}
-        </div>
-        <div class="chk-scroll">
-          <table class="chk-t">
-            <colgroup><col style="width:42px"><col style="width:24%"><col style="width:24%"><col><col style="width:92px"></colgroup>
-            <thead><tr>
-              <th class="ctr">No.</th><th>Parameter</th><th>Criteria</th><th>Output</th><th class="ctr">Score</th>
-            </tr></thead>
-            <tbody>${body}</tbody>
-          </table>
-        </div>
+      <button type="button" class="vm-card${open ? ' on' : ''}"
+              data-vm-card="${idxSafe}" data-vm-name="${attrEsc(cl.name)}"
+              aria-expanded="${open ? 'true' : 'false'}"
+              onclick="toggleVmPillar(${idxSafe}, &quot;${attrEsc(cl.name)}&quot;)">
+        <span class="vm-card-top">
+          <span class="vm-card-name">${escHtml(cl.name)}</span>
+          <span class="vm-card-score" style="color:${ct.ink}">${cl.score}<span class="vm-card-max">/${cl.max}</span></span>
+        </span>
+        <span class="vm-meter" style="background:${ct.track}">
+          <span class="vm-meter-fill" style="width:${pct}%;background:${ct.fill}"></span>
+        </span>
+        <span class="vm-card-foot">
+          <span class="vm-card-word" style="color:${ct.ink}">${pct}% &middot; ${ct.word}</span>
+          <span class="vm-card-n">${cl.params} param${cl.params === 1 ? '' : 's'}<span class="vm-caret">&#9662;</span></span>
+        </span>
+      </button>`;
+  }).join('');
+
+  // ── One detail panel per pillar, revealed on demand ──────────────────────
+  const panels = (data.classes || []).map(cl => {
+    const open = vmOpen[String(idxSafe)] === cl.name;
+    const rows = (cl.rows || []).map(r => {
+      const rt = scoreTone(r.score, r.max);
+      const pct = (r.score == null || !r.max) ? 0 : (r.score / r.max) * 100;
+      return `
+        <li class="vm-row">
+          <span class="vm-row-main">
+            <span class="vm-row-name">${escHtml(r.parameter)}${
+              r.note ? `<span class="vm-why" title="${attrEsc(r.note)}">?</span>` : ''}</span>
+            <span class="vm-row-crit">target ${escHtml(r.criteria)}</span>
+          </span>
+          <span class="vm-row-val">${escHtml(r.value)}</span>
+          <span class="vm-row-meter" style="background:${rt.track}">
+            <span class="vm-meter-fill" style="width:${pct}%;background:${rt.fill}"></span>
+          </span>
+          <span class="vm-row-score" style="color:${rt.ink}">${
+            r.score == null ? '&mdash;' : r.score}<span class="vm-row-max">/${r.max}</span></span>
+        </li>`;
+    }).join('');
+    return `
+      <div class="vm-panel" data-vm-panel="${idxSafe}" data-vm-name="${attrEsc(cl.name)}"${open ? '' : ' hidden'}>
+        <ul class="vm-rows">${rows}</ul>
+        ${cl.excluded_params ? `<p class="vm-excl">${cl.excluded_params} further
+          ${cl.excluded_params === 1 ? 'parameter needs' : 'parameters need'} an annual report,
+          a filing or a web search, so ${cl.excluded_params === 1 ? 'it is' : 'they are'} left out
+          of both this score and the total: <em>${escHtml((cl.excluded_names || []).join(', '))}</em>.</p>` : ''}
       </div>`;
   }).join('');
 
+  const basis = data.basis === 'consolidated' ? 'Consolidated'
+              : (data.basis === 'standalone' ? 'Standalone' : 'Unknown-basis');
+
   return `
-  <div class="chk-wrap">
-    <div class="chk-hd">
-      <h4>${data.security}</h4>
-      ${data.code ? `<span class="chk-code">${data.code}${data.industry ? ' · ' + data.industry : ''}</span>` : ''}
-      <span class="vm-total">Total <strong>${t.score}</strong> <span style="color:#94a3b8">/ ${t.max}</span>
-        <span style="color:${scoreColour(t.score, t.max)};font-weight:700">${t.pct}%</span></span>
+  <div class="vm-wrap">
+    <div class="vm-hero">
+      <div class="vm-hero-l">
+        <div class="vm-hero-num" style="color:${tone.ink}">${t.pct}<span class="vm-hero-pc">%</span></div>
+        <div class="vm-hero-sub">${t.score} of ${t.max} points</div>
+      </div>
+      <div class="vm-hero-r">
+        <div class="vm-hero-name">${escHtml(data.security)}</div>
+        <div class="vm-hero-meta">${data.code ? escHtml(data.code) + ' &middot; ' : ''}${
+          data.industry ? escHtml(data.industry) + ' &middot; ' : ''}${basis} statements, ${escHtml(asOf)}</div>
+        <span class="vm-meter vm-hero-meter" style="background:${tone.track}">
+          <span class="vm-meter-fill" style="width:${t.pct || 0}%;background:${tone.fill}"></span>
+        </span>
+        <div class="vm-hero-note">${t.params} of ${totalParams} parameters could be measured${
+          t.excluded_params ? '; the other ' + t.excluded_params + ' need a filing and are left out of the total' : ''}.</div>
+      </div>
     </div>
-    <div class="chk-src">
-      ${data.basis === 'consolidated' ? 'Consolidated' : (data.basis === 'standalone' ? 'Standalone' : 'Unknown-basis')}
-      financials from Screener.in, captured ${asOf} · matched by ${data.matched_by}.
-      Sales and profit growth are the average of the 1Y, 3Y and 5Y CAGRs.
-      ${t.params} parameters are scored out of ${t.max} points.
-      ${t.excluded_params ? `${t.excluded_params} of the workbook's ${t.params + t.excluded_params}
-      (worth ${t.excluded_max} points) need an annual report, a filing or a web search and are
-      not shown.` : ''}
-    </div>
-    ${blocks}
+
+    <div class="vm-grid">${cards}</div>
+    ${panels}
   </div>`;
 }
 
