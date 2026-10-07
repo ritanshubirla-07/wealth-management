@@ -492,8 +492,16 @@ function renderChecklist(data, holding, idx) {
 
   const t = data.total;
   const tone = scoreTone(t.score, t.max);
-  const asOf = data.as_of ? new Date(data.as_of).toLocaleDateString('en-IN',
-    {day: 'numeric', month: 'short', year: 'numeric'}) : 'unknown';
+  // Two different dates, kept apart on purpose: the period the accounts cover,
+  // and when we last fetched them. Only the first says anything about the
+  // financials; showing the fetch date alone read as "accounts dated 1 Oct".
+  const fetched = data.as_of ? new Date(data.as_of).toLocaleDateString('en-IN',
+    {day: 'numeric', month: 'short', year: 'numeric'}) : null;
+  const covers = data.period_latest
+    ? `FY to ${data.period_latest}${data.has_ttm ? ' + TTM' : ''}`
+    : null;
+  const span = data.period_years > 1
+    ? `${data.period_years} years of history` : null;
   const totalParams = t.params + (t.excluded_params || 0);
   const idxSafe = Number(idx) || 0;
 
@@ -584,12 +592,15 @@ function renderChecklist(data, holding, idx) {
       <div class="vm-hero-r">
         <div class="vm-hero-name">${escHtml(data.security)}</div>
         <div class="vm-hero-meta">${data.code ? escHtml(data.code) + ' &middot; ' : ''}${
-          data.industry ? escHtml(data.industry) + ' &middot; ' : ''}${basis} statements, ${escHtml(asOf)}</div>
+          data.industry ? escHtml(data.industry) + ' &middot; ' : ''}${basis}${
+          covers ? ' &middot; ' + escHtml(covers) : ''}${
+          span ? ' &middot; ' + escHtml(span) : ''}</div>
         <span class="vm-meter vm-hero-meter" style="background:${tone.track}">
           <span class="vm-meter-fill" style="width:${t.pct || 0}%;background:${tone.fill}"></span>
         </span>
         <div class="vm-hero-note">${t.params} of ${totalParams} parameters could be measured${
-          t.excluded_params ? '; the other ' + t.excluded_params + ' need a filing and are left out of the total' : ''}.</div>
+          t.excluded_params ? '; the other ' + t.excluded_params + ' need a filing and are left out of the total' : ''}.${
+          fetched ? ` <span class="vm-fetched" title="When these statements were last downloaded. Company accounts are published quarterly, so this is a freshness note, not the period they cover.">Data read ${escHtml(fetched)}.</span>` : ''}</div>
       </div>
     </div>
 

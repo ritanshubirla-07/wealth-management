@@ -30,6 +30,30 @@ def _is_fund_like(name: str) -> bool:
     return bool(_FUND_WORDS.search(name or ""))
 
 
+def _statement_period(fundamentals: dict) -> dict:
+    """Which accounting periods the stored statements actually cover.
+
+    The panel used to show only the fetch timestamp, which reads as though the
+    accounts were drawn up that day — "Consolidated statements, 1 Oct 2026" for
+    a company whose last published year ended March 2026. This returns the real
+    period so the fetch date can be demoted to what it is: a freshness note.
+    """
+    periods = []
+    for section in ("profit_loss", "balance_sheet", "cash_flow"):
+        block = (fundamentals or {}).get(section) or {}
+        found = block.get("periods") or []
+        if len(found) > len(periods):
+            periods = found
+
+    annual = [p for p in periods if "ttm" not in str(p).lower()]
+    return {
+        "period_latest": annual[-1] if annual else None,
+        "period_first": annual[0] if annual else None,
+        "period_years": len(annual),
+        "has_ttm": any("ttm" in str(p).lower() for p in periods),
+    }
+
+
 def _find_market_row(db: Session, isin: str = "", name: str = "", code: str = ""):
     """Locate a security using the same order the dashboard's valuation uses."""
     if isin:
@@ -144,12 +168,18 @@ def get_checklist(
         "cmp": row.cmp,
         "price_source": row.price_source,
         "matched_by": how,
+        # When the data was fetched. Distinct from the period it covers, below:
+        # a scrape taken in October still reports the year ended March.
         "as_of": as_of.isoformat() if as_of else None,
         "source": primary,
         "yahoo_symbol": row.yahoo_symbol,
         "yahoo_as_of": row.yahoo_as_of.isoformat() if row.yahoo_as_of else None,
         # Consolidated statements where the company files them, else standalone
         "basis": (fundamentals or {}).get("basis") or "unknown",
+        # The accounting periods behind the score — the figure a reader actually
+        # needs. The fetch date above says nothing about how current the
+        # financials are, only about when we last looked.
+        **_statement_period(fundamentals),
         "gsec_10y_yield": GSEC_10Y_YIELD,
         "classes": result["classes"],
         "total": result["total"],
