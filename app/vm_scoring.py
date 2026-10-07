@@ -26,10 +26,15 @@ partial credit. Every row reports the measured value alongside its score so a
 number can always be traced back. Every score is rounded to the nearest 0.5.
 
 Sales and profit growth use the **average of the 1Y, 3Y and 5Y CAGRs**, as
-requested, rather than a single long-horizon figure. PEG divides the P/E by
-**EPS** growth on that same 1Y/3Y/5Y basis, not by profit growth: the two
-diverge whenever the share count moves, and only the per-share figure is what
-a shareholder actually earns.
+requested, rather than a single long-horizon figure.
+
+PEG is the exception, and is computed as ``P/E / EPS growth``, where EPS growth
+is one compound rate over the whole published run —
+``(ending EPS / beginning EPS)**(1/N) - 1``. Two deliberate differences from
+the parameters above: it is **EPS**, not profit, because the two diverge
+whenever the share count moves and only the per-share figure is what a
+shareholder earns; and it is a **single** rate rather than an average of
+windows, because averaging let one depressed base year dominate.
 
 Promoter holding is scored in bands rather than against one cut-off — under
 20% nothing, then 0.5 per 20 points up to the full 2 at 80%+.
@@ -69,6 +74,33 @@ PE_ZERO_AT = 25.0
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
+
+
+def _eps_growth(series: list) -> tuple:
+    """Annual EPS growth as ``(ending/beginning)**(1/N) - 1``, in percent.
+
+    One compound rate across the whole published run, not an average of several
+    windows. Averaging 1Y/3Y/5Y let a single depressed base year dominate: on
+    one holding here it returned 181% a year, which drove PEG to 0.50 and full
+    marks, where the compound rate over the actual history is 57%.
+
+    The run starts at the first profitable year, because the formula has no
+    meaning from a loss — a negative or zero beginning EPS makes the ratio
+    inside the root negative. ``N`` counts the years actually spanned, so
+    skipping early losses shortens the base rather than silently stretching it.
+
+    Returns ``(growth_pct, beginning, ending, years)``, all None when the series
+    cannot support the calculation.
+    """
+    clean = [v for v in series if v is not None]
+    positive = [(index, value) for index, value in enumerate(clean) if value > 0]
+    if len(positive) < 2:
+        return None, None, None, None
+    (first_index, beginning), (last_index, ending) = positive[0], positive[-1]
+    years = last_index - first_index
+    if years < 1:
+        return None, None, None, None
+    return ((ending / beginning) ** (1 / years) - 1) * 100, beginning, ending, years
 
 
 def _promoter_score(pct: Optional[float]) -> Optional[float]:
@@ -464,16 +496,15 @@ def evaluate(fundamentals: dict, market=None, yahoo: dict = None) -> dict:
     # while diluting it per share, and dividing by profit growth would then
     # flatter exactly the companies that issued stock to buy it.
     eps_annual = f.row("profit_loss", "EPS in Rs")          # full years only
-    eps_parts = [p for p in (_cagr(eps_annual, 1), _cagr(eps_annual, 3),
-                             _cagr(eps_annual, 5)) if p is not None]
-    eps_growth = (sum(eps_parts) / len(eps_parts)) if eps_parts else None
+    eps_growth, eps_from, eps_to, eps_years = _eps_growth(eps_annual)
 
     # Shown whenever the arithmetic is defined, including when it comes out
     # negative — a negative PEG is a finding, not a gap, and saying only "not
     # meaningful" hid the fact that earnings are shrinking.
     peg = (pe / eps_growth) if (pe and eps_growth) else None
-    growth_note = ("EPS CAGR averaged over 1Y/3Y/5Y: "
-                   + ", ".join(_fmt(p, '%', 1) for p in eps_parts)) if eps_parts else ""
+    growth_note = (f"EPS growth is (Rs {_fmt(eps_to)} / Rs {_fmt(eps_from)})"
+                   f"^(1/{eps_years}) - 1 = {_fmt(eps_growth, '%', 1)} a year "
+                   f"over {eps_years} years." if eps_growth is not None else "")
 
     if peg is None:
         out.add(31, VALUATION, "PEG Ratio", "< 1", "n/a",
