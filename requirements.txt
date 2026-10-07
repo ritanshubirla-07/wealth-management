@@ -9,4 +9,3 @@ pydantic
 requests
 python-dotenv
 numpy
-tabulate

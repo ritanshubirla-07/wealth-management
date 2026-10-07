@@ -52,11 +52,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .kpi{background:#fff;border:1px solid #e8ecf1;border-radius:12px;padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .kpi-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .kpi-lb{font-size:11.5px;color:#94a3b8;font-weight:500}
-.kpi-ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center}
-.kpi-ic svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2}
-.ic1{background:#e0f7f5;color:#0d9488}
-.ic2{background:#dbeafe;color:#2563eb}
-.ic3{background:#d1fae5;color:#059669}
 .kpi-v{font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-.5px;line-height:1.15}
 .kpi-d{font-size:10.5px;font-weight:600;margin-top:4px}
 .kpi-d.pos{color:#059669}
@@ -69,40 +64,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .crd-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
 .crd-t{font-size:14px;font-weight:600;color:#0f172a;display:flex;align-items:center;gap:7px}
 .crd-t svg{width:17px;height:17px;stroke:#3b82f6;fill:none;stroke-width:1.8}
-.crd-lk{font-size:11px;color:#3b82f6;font-weight:500;cursor:pointer;text-decoration:none;transition:.15s}
-.crd-lk:hover{color:#1d4ed8;text-decoration:underline}
 
 /* ═══════════════════════ MIDDLE ROW ═══════════════════════ */
 .mid{display:grid;grid-template-columns:1fr 1.7fr;gap:14px;margin-bottom:18px}
 
-/* Donut (SVG-based) */
-.don-area{display:flex;align-items:center;gap:22px;padding-top:6px}
-.don-wrap{position:relative;width:170px;height:170px;flex-shrink:0}
-.don-wrap svg{width:100%;height:100%;transform:rotate(-90deg)}
-.don-ctr{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
-.don-ctr b{font-size:17px;font-weight:700;display:block;color:#0f172a}
-.don-ctr span{font-size:10px;color:#94a3b8}
-.leg{display:flex;flex-direction:column;gap:12px}
-.leg-r{display:flex;align-items:center;gap:8px}
-.leg-d{width:9px;height:9px;border-radius:50%}
-.leg-n{font-size:12px;color:#64748b;width:48px}
-.leg-p{font-size:13px;font-weight:600;color:#1e293b;width:55px}
-.leg-vl{font-size:11px;color:#94a3b8}
-
 /* Performance chart */
 .pf-hdr{display:flex;justify-content:space-between;align-items:center;width:100%}
-.pf-leg{display:flex;gap:14px;align-items:center}
-.pf-li{display:flex;align-items:center;gap:4px;font-size:10.5px;color:#64748b}
-.pf-line{width:18px;height:2px;border-radius:1px}
-.pf-tabs{display:flex;gap:0;margin-bottom:10px;background:#f1f5f9;border-radius:6px;padding:2px}
-.pf-tabs button{padding:4px 12px;border-radius:5px;font-size:10.5px;font-weight:600;color:#94a3b8;cursor:pointer;background:transparent;border:none;font-family:inherit;transition:.15s}
 .pf-tabs button.on{background:#fff;color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .pf-tabs button:hover:not(.on){color:#64748b}
 .chwrap{height:195px;position:relative}
 .chwrap canvas{width:100%!important;height:100%!important}
-
-/* ═══════════════════════ BOTTOM ROW ═══════════════════════ */
-.bot{display:grid;grid-template-columns:1.1fr .95fr 1fr;gap:14px;margin-bottom:18px}
 
 /* ── Data tables ──────────────────────────────────────────────────────────
    Alignment follows financial-reporting convention rather than one blanket
@@ -134,8 +105,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .chk-hd{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:3px}
 .chk-hd h4{font-size:13px;font-weight:700;color:#0f172a;margin:0}
 .chk-hd .chk-code{font-size:11px;color:#64748b;font-weight:500}
-.chk-tally{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 12px}
-.chk-pill{font-size:10px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .chk-src{font-size:10px;color:#94a3b8;line-height:1.55;margin-bottom:14px;max-width:760px}
 
 .chk-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
@@ -156,7 +125,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .chk-t .c-assume{color:#64748b}
 .chk-t .c-out{font-weight:600;color:#0f172a;font-variant-numeric:tabular-nums}
 .chk-t .c-score{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
-.chk-t .c-rmk{text-align:center;white-space:nowrap}
 
 /* Class blocks: Growth / Quality / Ownership / Valuation */
 .vm-class{margin-bottom:16px}
@@ -175,33 +143,19 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .vm-total strong{color:#0f172a;font-size:13px}
 
 /* Status shown as a stripe + badge, so the row itself stays white and legible */
-tr.st-pass    .c-sr{border-left-color:#16a34a}
-tr.st-fail    .c-sr{border-left-color:#dc2626}
 tr.st-info    .c-sr{border-left-color:#0284c7}
 tr.st-manual  .c-sr{border-left-color:#d97706}
 tr.st-no_data .c-sr{border-left-color:#cbd5e1}
 .chk-t tbody tr:hover td{background:#f8fafc}
 
-.chk-badge{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;
-           letter-spacing:.3px;padding:3px 8px;border-radius:999px;margin-top:3px}
-.chk-mark{font-size:13px;font-weight:700;line-height:1;display:block}
-
 /* Method notes live in a hover tooltip, flagged by a small marker, rather than
    as a visible line under every parameter */
 .chk-info{display:inline-block;margin-left:5px;color:#94a3b8;font-size:11px;cursor:help;
           font-weight:400;vertical-align:1px}
-.chk-t tr:hover .chk-info{color:#2563eb}
-
-/* Section divider (Valuation) */
-tr.chk-sec td{background:#f1f5f9;font-size:9.5px;font-weight:700;color:#475569;
-              text-transform:uppercase;letter-spacing:.7px;padding:8px 16px;
-              text-align:left;border-bottom:1px solid #e2e8f0;border-top:1px solid #e2e8f0}
-
-@media (max-width:640px){
+.chk-t tr:hover .chk-info{color:#2563eb}@media (max-width:640px){
   .chk-wrap{padding:14px 12px 18px}
   .chk-t th,.chk-t td{padding:8px 10px}
 }
-.hi{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;flex-shrink:0}
 .hl{font-size:12.5px;font-weight:500;color:#1e293b}
 
 /* Industry tag beside a holding. Sits a step quieter than the company name so
@@ -213,10 +167,7 @@ tr.chk-sec td{background:#f1f5f9;font-size:9.5px;font-weight:700;color:#475569;
   font-size:10px;font-weight:600;line-height:1.5;letter-spacing:.2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   vertical-align:middle;cursor:help;
-}
-/* The name may wrap on a narrow screen; the tag drops below it rather than
-   squeezing the name into a single character column. */
-@media (max-width:760px){
+}@media (max-width:760px){
   .hn{flex-wrap:wrap;gap:5px 7px}
   .ind-tag{max-width:120px;font-size:9.5px}
 }
@@ -225,8 +176,6 @@ td.tw{color:#94a3b8}
 td.tg{font-weight:600}
 td.tp{color:#059669}
 td.tn{color:#ef4444}
-.vf{display:flex;align-items:center;justify-content:center;gap:4px;color:#3b82f6;font-size:11.5px;font-weight:500;margin-top:12px;cursor:pointer;transition:.15s}
-.vf:hover{color:#1d4ed8}
 
 /* Sector bars */
 .sr{display:flex;align-items:center;gap:10px;margin-bottom:13px}

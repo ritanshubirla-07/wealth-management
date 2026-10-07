@@ -17,7 +17,8 @@ All of this is wrapped in a lightning-fast, zero-dependency Single Page Applicat
 
 ### 1. Intelligent PDF Extraction
 * **Factory Pattern Architecture:** Financial institutions frequently change their statement formats. VIKABH uses a `detector.py` factory pattern to identify the broker (e.g., Kotak, HDFC, Enam) and route the PDF to an isolated, specialized parser. 
-* **Zero-Hallucination Parsing:** Instead of relying on LLMs to read tables (which causes quantity hallucinations), PyMuPDF deterministically tracks vertical layouts and Regex blocks to extract 100% accurate quantities, buy prices, and current values.
+* **Zero-Hallucination Parsing:** Instead of relying on LLMs to read tables (which causes quantity hallucinations), `pdfplumber` deterministically tracks vertical layouts and Regex blocks to extract quantities, buy prices and current values. An LLM is used only to map column headers it has never seen, never to read a number.
+* **Aggregate rows are rejected.** A statement's "Net Worth" or "Stocks" subtotal is not a holding. Three independent checks catch them: a zero-quantity test, a whole-label match, and an arithmetic test that spots a row equal to the sum of the rows below it.
 
 ### 2. Multi-Account Aggregation (Family Office View)
 * Upload multiple distinct accounts (e.g., Wife's Demat, Husband's PMS) to a single Client profile.
@@ -34,8 +35,19 @@ To prevent LLM degradation from massive prompt context, VIKABH splits the AI rea
 ### 4. Zero-Latency Dashboard
 LLMs take 15-20 seconds to run. The FastAPI backend orchestrates uploads sequentially and runs the LLM calls in a background thread, saving the outputs to an `AnalysisCache` SQLite table. The Vanilla JS frontend polls this state and loads instantly once the cache is populated.
 
-### 5. Screener.in Market Data Enrichment
-Statements are a snapshot of one date. Loading a **Screener.in CSV export** marks every matched holding to its live price and attaches sector, market-cap tier and fundamentals (P/E, ROE, ROCE, debt/equity, dividend yield, growth).
+### 5. Fundamentals, refreshed nightly
+Statements are a snapshot of one date. Company statements are fetched from **Yahoo Finance** (a JSON API, so no HTML parsing to break) with **Screener.in** as the backbone for the ten-year history and shareholding pattern Yahoo does not carry. A job at **01:00 IST** refreshes every security any client holds.
+
+* **Keyed on securities, not holdings.** ~1,000 holding rows across all clients resolve to ~78 distinct companies. A stock held by nine clients is fetched once into the one `market_data` row they all join against.
+* **Sources are never spliced mid-series.** The two disagree by definition — Yahoo counts lease liabilities in debt (~20% higher) and right-of-use assets in PPE (~15–24% higher). A row therefore comes from one source end to end, because a splice would plant a step change at the boundary year and corrupt exactly the debt trends the history exists to measure.
+* **Alpha Vantage was evaluated and rejected.** It returns no fundamentals for Indian equities at all — `OVERVIEW`, `INCOME_STATEMENT`, `BALANCE_SHEET` and `CASH_FLOW` are empty for `.NS` and `.BSE` symbols on a key that returns 55 fields for `IBM`. Its Indian coverage is prices only, one symbol per request against a 25/day free tier, which the NSE/BSE BhavCopy files already beat.
+
+### 6. 34-parameter fundamental scorecard
+Every holding expands into a scorecard grouped as **Growth / Quality / Ownership / Valuation**, modelled on the Dr. Vijay Malik checklist.
+
+* A plain threshold ("D/E ≤ 0.5", "PEG < 1") is scored **binary on the latest figure** — full marks or none. Genuine consistency criteria (cash flow positive every year, a turnover ratio's trend) keep partial credit. Scores land in half-point steps.
+* Parameters needing an annual report, a credit rating or a web search are **dropped from the output and from the denominator**, so a class is scored out of what was actually measured rather than being quietly penalised for what nobody can see.
+* Portfolio Health on the Overview is the value-weighted average of these scores, reported alongside the share of the portfolio it could be computed for.
 
 * **No API, by design:** Screener.in does not offer a public API. The premium **Export** button produces a CSV, and that is what the app ingests — no credentials are stored and nothing breaks when Screener changes its HTML.
 * **Format-tolerant ingestion:** you choose up to 50 columns in Screener, so column names are matched by rule rather than position. Any preamble rows are skipped, unrecognised columns are preserved verbatim in `extras_json`, and the import response lists exactly what was recognised and ignored.
@@ -170,10 +182,39 @@ This lists which holdings matched and how (`isin`, `code` or `name`) plus every 
 | `GET /api/market/coverage/{client_id}` | Per-holding match report, including unmatched holdings. |
 
 ### Things worth knowing
-* **Prices are as fresh as your last export.** Nothing refreshes automatically; `GET /api/market/status` reports the timestamp and the home page shows it.
+* **Fundamentals refresh nightly; a CSV export is now optional.** The 01:00 IST job keeps statements current — see *Daily refresh* below. `GET /api/market/status` still reports the import timestamp for the CSV path.
 * **Revaluation needs a share quantity.** Demat and PMS statements carry one, so those revalue. Holdings uploaded before this feature existed have no stored quantity and must be re-uploaded to revalue.
 * **Market-cap tiers are rank-based.** SEBI/AMFI define large cap as the top 100 companies by market cap, mid as 101–250, small as 251+. Tiers are ranked over *the rows you imported*, so they are only meaningful if the export covered a broad universe — a 25-row screen will label everything "Large Cap".
 * **ISIN is the reliable join key.** Demat statements include it and it is stored per holding. PMS and mutual-fund statements usually do not, so those fall back to name matching — which is why the coverage endpoint exists.
+
+---
+
+## 🌙 Daily refresh
+
+Every security any client holds has its statements refreshed at **01:00 IST**. The API process runs this itself — a stdlib thread, no scheduler dependency — and repairs a missed night on start-up if the last successful run is more than 26 hours old.
+
+```bash
+curl http://localhost:8000/api/refresh/status      # when it last ran, when it next will
+curl -X POST http://localhost:8000/api/refresh/run # run it now
+```
+
+That thread only ticks while the server is up. To refresh regardless, point Windows Task Scheduler at the standalone command:
+
+```bash
+python scripts/daily_refresh.py                # fundamentals + prices
+python scripts/daily_refresh.py --no-prices    # statements only
+python scripts/daily_refresh.py --force        # ignore the freshness window
+python scripts/daily_refresh.py --limit 5      # smoke test
+```
+
+```bat
+schtasks /create /tn "VIKABH daily fundamentals" /sc daily /st 01:00 ^
+  /tr "cmd /c cd /d <repo> && .venv\Scripts\python.exe scripts\daily_refresh.py"
+```
+
+Set `VIKABH_SCHEDULER=off` when a second instance shares the database, so two processes do not fetch the same securities over each other.
+
+Coverage is honest about its gaps: of 78 held securities, 64 carry Yahoo statements, 3 delisted micro-caps fall back to Screener, and 11 are mutual funds — which have no company statements by definition and are priced from AMFI NAVs instead.
 
 ---
 
@@ -182,21 +223,40 @@ This lists which holdings matched and how (`isin`, `code` or `name`) plus every 
 ```text
 wealth-management/
 ├── app/
-│   ├── main.py              # FastAPI application & static mounting
-│   ├── database.py          # SQLite connection and session maker
-│   ├── models.py            # SQLAlchemy ORM definitions (Client, Account, Holding, Cache)
-│   ├── llm.py               # AI orchestration and prompt engineering
-│   ├── market_data.py       # Screener.in CSV parsing + holding matching
-│   ├── sector_map.py        # Deterministic sector / market-cap lookup
-│   ├── routers/             # API Endpoints (Upload, Overview, Portfolio, Market, etc.)
-│   └── parsers/             # Statement extraction logic
-│       ├── detector.py      # Format detection, header mapping, holding building
-│       └── excel.py         # Spreadsheet statements (delegates to detector)
-├── frontend/                # Zero-dependency SPA
-│   ├── clients.html         # Client CRUD UI
-│   ├── upload.html          # Drag-and-Drop & Polling UI
-│   ├── dashboard.html       # Final UI Template
-│   └── dashboard.js         # Dynamic DOM manipulation & Chart.js logic
-├── .env.example             # Environment templates
-└── requirements.txt         # Python dependencies
+│   ├── main.py                 # FastAPI app, static mounting, scheduler boot
+│   ├── database.py             # SQLite session maker + additive column migrations
+│   ├── models.py               # SQLAlchemy ORM (Client, Account, Holding, MarketData)
+│   ├── llm.py                  # AI orchestration and prompt engineering
+│   ├── valuation.py            # One basis for every value shown (CMP vs statement)
+│   │
+│   ├── yahoo_fundamentals.py   # Yahoo statements + industry/sector (primary source)
+│   ├── screener_scraper.py     # Screener company pages: 10y history, shareholding
+│   ├── official_prices.py      # NSE/BSE BhavCopy + AMFI NAV files
+│   ├── market_data.py          # Screener CSV parsing + holding→security matching
+│   ├── market_refresh.py       # Shared price/statement refresh (CLI + upload)
+│   ├── daily_refresh.py        # Nightly pass, keyed on distinct held securities
+│   ├── scheduler.py            # 01:00 IST thread, stdlib only
+│   │
+│   ├── checklist.py            # Financials: the shared reading layer over payloads
+│   ├── vm_scoring.py           # 34-parameter Growth/Quality/Ownership/Valuation score
+│   ├── instrument_check.py     # Is this row a real holding (listed / fund / cash)?
+│   ├── sector_map.py           # Deterministic sector lookup used at upload
+│   ├── routers/                # API endpoints
+│   │   ├── upload.py  overview.py  portfolio.py  performance.py
+│   │   └── risk.py    insights.py  market.py     analysis.py
+│   └── parsers/
+│       ├── detector.py         # Format detection, header mapping, holding building
+│       └── excel.py            # Spreadsheet statements (delegates to detector)
+├── frontend/                   # Zero-dependency SPA
+│   ├── clients.html            # Client CRUD UI
+│   ├── upload.html             # Drag-and-drop & polling UI
+│   ├── dashboard.html          # Markup + stylesheet
+│   └── dashboard.js            # Rendering, scorecard, sector tags
+├── scripts/
+│   ├── daily_refresh.py        # The nightly job, standalone (Task Scheduler)
+│   └── fetch_cmp.py            # Manual price/statement pull from Screener
+├── data/                       # Cached exchange masters & BhavCopy (gitignored)
+├── uploads/                    # Client statements (gitignored — never committed)
+├── .env.example                # Environment template
+└── requirements.txt            # Python dependencies
 ```

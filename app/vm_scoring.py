@@ -34,7 +34,6 @@ Its max still counts towards the denominator, exactly as the workbook does, so
 the ratio is never flattered by simply skipping what could not be checked.
 """
 
-import os
 from typing import Optional
 
 from app.checklist import Financials, GSEC_10Y_YIELD, SALES_LABELS, BORROWING_LABELS
