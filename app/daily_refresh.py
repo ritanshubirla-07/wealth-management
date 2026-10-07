@@ -36,7 +36,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 DEFAULT_MAX_AGE_HOURS = 20
 
 
-def securities_held(db: Session) -> list:
+def securities_held(db: Session, client_id: int = None) -> list:
     """The distinct ``market_data`` rows that current holdings point at.
 
     ``distinct_securities`` already collapses the holding rows to one entry per
@@ -54,7 +54,7 @@ def securities_held(db: Session) -> list:
             self.security_name = entry.get("name")
 
     seen, out = set(), []
-    for entry in distinct_securities(db):
+    for entry in distinct_securities(db, client_id):
         row, _ = match_holding(_Probe(entry), by_isin, by_code, by_name)
         if row is None or row.id in seen:
             continue
@@ -76,6 +76,7 @@ def refresh_fundamentals(max_age_hours: int = DEFAULT_MAX_AGE_HOURS,
                          workers: int = 4,
                          limit: int = 0,
                          force: bool = False,
+                         client_id: int = None,
                          progress=None) -> dict:
     """Pull Yahoo statements for every held security into its market_data row.
 
@@ -84,7 +85,7 @@ def refresh_fundamentals(max_age_hours: int = DEFAULT_MAX_AGE_HOURS,
     """
     db = SessionLocal()
     try:
-        targets = securities_held(db)
+        targets = securities_held(db, client_id)
         if not force:
             targets = [r for r in targets if not _is_fresh(r, max_age_hours)]
         if limit:

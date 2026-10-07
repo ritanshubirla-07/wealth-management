@@ -1,6 +1,7 @@
 """Per-stock fundamental checklist, served for the expandable Portfolio rows."""
 
 import json
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -13,6 +14,20 @@ from app.vm_scoring import evaluate as vm_evaluate
 from app.market_data import normalise_name, normalise_code
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
+
+
+_FUND_WORDS = re.compile(
+    r'\b(fund|etf|nav|scheme|growth|dividend|liquid|arbitrage|gilt|debt|bond|'
+    r'ncd|sdl|g-?sec|treasury|index|nifty|sensex|fof|sip|amc|mutual)\b', re.I)
+
+
+def _is_fund_like(name: str) -> bool:
+    """True when the name reads as a fund or debt instrument, not a company.
+
+    Used only to word the "no financials" panel: a fund has no company
+    statements by nature, so telling someone to go and fetch them is wrong.
+    """
+    return bool(_FUND_WORDS.search(name or ""))
 
 
 def _find_market_row(db: Session, isin: str = "", name: str = "", code: str = ""):
@@ -72,18 +87,28 @@ def get_checklist(
         return {
             "found": False,
             "security": name or isin or code,
-            "reason": ("No market data for this security yet. Run "
-                       "`python -m scripts.fetch_cmp` to fetch it from Screener."),
+            "reason": ("Mutual funds, ETFs and bonds have no company financials to score. "
+                       "This holding is valued at its published NAV."
+                       if _is_fund_like(name) else
+                       "This security has not been matched to a listing yet, so there is "
+                       "nothing to score. It is picked up by the next refresh."),
         }
     if not row.fundamentals_json and not row.yahoo_json:
+        # Say which of these it is rather than printing a command to run. A
+        # fund has no company statements and never will, which is a fact about
+        # the instrument, not a job someone forgot to run.
+        looks_like_fund = _is_fund_like(row.name or name or "")
         return {
             "found": False,
             "security": row.name or name,
             "code": row.nse_code,
-            "reason": ("A price is stored for this security but no financial statements "
-                       "have been captured yet. Run `python scripts/daily_refresh.py` to "
-                       "collect them, or wait for the 01:00 IST refresh. Mutual funds and "
-                       "bonds have no company statements and will stay blank."),
+            "reason": ("Mutual funds, ETFs and bonds have no company financials to score. "
+                       "This holding is valued at its published NAV."
+                       if looks_like_fund else
+                       "Company financials for this security are not published by either "
+                       "data source yet, which is usual for a recent listing. The holding "
+                       "is still priced and counted in the portfolio; the scorecard fills "
+                       "in once statements appear."),
         }
 
     def _load(raw, what):

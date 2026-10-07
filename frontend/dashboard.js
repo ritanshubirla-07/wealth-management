@@ -502,6 +502,25 @@ function renderChecklist(data, holding, idx) {
     const pct = cl.pct == null ? 0 : cl.pct;
     const ct = scoreTone(cl.score, cl.max);
     const open = vmOpen[String(idxSafe)] === cl.name;
+    // A pillar can end up with nothing measurable — Yahoo publishes no Indian
+    // shareholding pattern, so Ownership is empty for a company Screener has
+    // not covered. Showing "0/0 - 0% - poor" would read as a failed pillar
+    // rather than an unmeasured one, so it says so instead.
+    if (!cl.params || !cl.max) {
+      return `
+      <div class="vm-card vm-card-empty">
+        <span class="vm-card-top">
+          <span class="vm-card-name">${escHtml(cl.name)}</span>
+          <span class="vm-card-score" style="color:#94a3b8">&mdash;</span>
+        </span>
+        <span class="vm-meter" style="background:#f1f5f9"></span>
+        <span class="vm-card-foot">
+          <span class="vm-card-word" style="color:#94a3b8">not measurable</span>
+          <span class="vm-card-n">${cl.excluded_params || 0} param${
+            (cl.excluded_params || 0) === 1 ? '' : 's'} need a filing</span>
+        </span>
+      </div>`;
+    }
     return `
       <button type="button" class="vm-card${open ? ' on' : ''}"
               data-vm-card="${idxSafe}" data-vm-name="${attrEsc(cl.name)}"

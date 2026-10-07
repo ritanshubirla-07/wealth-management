@@ -164,13 +164,30 @@ def upload_file(
 # ── Background: Screener market data ──
 
 def _refresh_market_data(client_id: int):
-    """Fetch CMP and fundamentals for every holding of a client."""
+    """Fetch prices and company statements for every holding of a client.
+
+    Both halves run, because they come from different places: prices from the
+    exchanges' close files via ``refresh_client``, company statements from
+    Yahoo via ``refresh_fundamentals``. Only the first used to run here, so a
+    freshly uploaded holding showed a price but an empty scorecard until the
+    01:00 IST job came round — the panel said the statements "have not been
+    captured yet", which was true but reads as a failure to someone who has
+    just uploaded a statement.
+    """
     try:
         from app.market_refresh import refresh_client_background
         refresh_client_background(client_id)
     except Exception as e:
         # Market data is an enrichment; never let it surface as an upload failure
-        log.error(f"Market refresh failed for client {client_id}: {e}")
+        log.error(f"Price refresh failed for client {client_id}: {e}")
+
+    try:
+        from app.daily_refresh import refresh_fundamentals
+        report = refresh_fundamentals(client_id=client_id)
+        log.info("Fundamentals for client %s: %s updated, %s without data, %s failed",
+                 client_id, report.get("updated"), report.get("no_data"), report.get("failed"))
+    except Exception as e:
+        log.error(f"Fundamentals refresh failed for client {client_id}: {e}")
 
 
 # ── Helper: Sector Categorization ──

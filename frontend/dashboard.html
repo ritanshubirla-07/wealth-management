@@ -130,6 +130,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .vm-card:hover{border-color:#cbd5e1;box-shadow:0 1px 3px rgba(15,23,42,.06)}
 .vm-card:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .vm-card.on{border-color:#94a3b8;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+/* A pillar with nothing measurable is inert: no hover, no pointer, no click */
+.vm-card-empty{cursor:default;background:#fcfdfe}
+.vm-card-empty:hover{border-color:#e2e8f0;box-shadow:none}
 .vm-card-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .vm-card-name{font-size:11px;font-weight:700;color:#0f172a;letter-spacing:.4px;text-transform:uppercase}
 .vm-card-score{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
