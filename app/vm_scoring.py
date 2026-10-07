@@ -468,16 +468,29 @@ def evaluate(fundamentals: dict, market=None, yahoo: dict = None) -> dict:
                              _cagr(eps_annual, 5)) if p is not None]
     eps_growth = (sum(eps_parts) / len(eps_parts)) if eps_parts else None
 
-    peg = (pe / eps_growth) if (pe and eps_growth and eps_growth > 0) else None
+    # Shown whenever the arithmetic is defined, including when it comes out
+    # negative — a negative PEG is a finding, not a gap, and saying only "not
+    # meaningful" hid the fact that earnings are shrinking.
+    peg = (pe / eps_growth) if (pe and eps_growth) else None
     growth_note = ("EPS CAGR averaged over 1Y/3Y/5Y: "
-                   + ", ".join(_fmt(p, '%', 1) for p in eps_parts) if eps_parts else "")
+                   + ", ".join(_fmt(p, '%', 1) for p in eps_parts)) if eps_parts else ""
+
     if peg is None:
-        reason = ("EPS growth is not positive, so PEG carries no meaning."
-                  if (eps_growth is not None and eps_growth <= 0)
-                  else "Needs a positive P/E and at least two years of EPS.")
+        out.add(31, VALUATION, "PEG Ratio", "< 1", "n/a",
+                None, 3,
+                "Needs a positive P/E and at least two years of EPS to compute. "
+                + growth_note)
+    elif peg < 0:
+        # Only a positive PEG below 1 is cheap. A negative one is arithmetically
+        # "< 1" but means the opposite — the company is profitable today and its
+        # earnings per share are falling — so it must never take the pass branch.
         out.add(31, VALUATION, "PEG Ratio", "< 1",
-                "Not meaningful" if (eps_growth is not None and eps_growth <= 0) else "n/a",
-                None if (eps_growth is None or pe is None) else 0.0, 3, reason)
+                f"{_fmt(peg)} (negative)", 0.0, 3,
+                f"Negative because EPS growth is negative at "
+                f"{_fmt(eps_growth, '%', 1)}: the company earns a profit today but "
+                f"earnings per share are shrinking, so there is no growth to pay "
+                f"for. Scores zero rather than passing the < 1 test, which a "
+                f"negative value would otherwise meet arithmetically. {growth_note}")
     else:
         out.add(31, VALUATION, "PEG Ratio", "< 1", _fmt(peg),
                 3.0 if peg < 1 else 0.0, 3,
