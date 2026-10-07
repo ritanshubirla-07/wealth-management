@@ -47,10 +47,11 @@ DEFAULT_WORKERS = int(os.getenv("SCREENER_WORKERS", "4"))
 # Statements change quarterly while prices change by the minute, so the extra
 # schedule requests are skipped while the stored statements are still fresh.
 FUNDAMENTALS_MAX_AGE_DAYS = float(os.getenv("SCREENER_FUNDAMENTALS_MAX_AGE_DAYS", "7"))
-# Which source sets CMP: "screener" for its live intraday price (default), or
-# "official" for NSE/BSE closing prices. Either way the official files still
-# fill in instruments Screener has no page for at all, such as mutual funds.
-PRICE_PRIMARY = os.getenv("PRICE_PRIMARY", "screener").strip().lower()
+# CMP is the previous close, taken from the exchanges' own BhavCopy files
+# (and AMFI NAVs for funds). Screener is never read for a price: it is kept
+# only for the statements behind the scorecard. A published close is the
+# figure a client can reconcile against a contract note, and three file
+# downloads price the whole book rather than one request per security.
 
 
 def distinct_securities(db, client_id=None) -> list:
@@ -197,9 +198,12 @@ def _needs_fundamentals(db, sec, code, cutoff) -> bool:
 
 def refresh_client(client_id=None, *, delay: float = DEFAULT_DELAY, max_age: float = 0,
                    with_schedules: bool = True, limit: int = None,
-                   workers: int = DEFAULT_WORKERS, use_official: bool = None,
+                   workers: int = DEFAULT_WORKERS,
                    dry_run: bool = False, progress=None) -> dict:
     """Fetch prices (and statements) for one client's holdings, or all holdings.
+
+    Prices are the previous close from the exchanges' BhavCopy files; Screener
+    is visited only for the statements behind the scorecard.
 
     Returns a report dict. Never raises for a single security's failure — one
     unreachable page must not abandon the rest of the portfolio.
@@ -265,43 +269,48 @@ def refresh_client(client_id=None, *, delay: float = DEFAULT_DELAY, max_age: flo
         if not resolved:
             return report
 
-        # ── Official prices ──
-        # Screener's live CMP is the default primary source. The official files
-        # (NSE/BSE close, AMFI NAV) are used as the primary only when asked, and
-        # otherwise run afterwards purely to fill gaps Screener cannot cover.
-        if use_official is None:
-            use_official = PRICE_PRIMARY == "official"
+        # ── Prices: previous close, from the exchanges' own files ──
+        # The only source of CMP. If the files cannot be downloaded the run
+        # leaves the stored prices alone rather than falling back to a scrape,
+        # so a price on the dashboard is always a published close.
         official = None
-        if use_official:
-            try:
-                official = OfficialPrices.load()
-                report["official"] = official.as_dict()
-            except Exception as exc:
-                log.warning("official price files unavailable: %s", exc)
+        try:
+            official = OfficialPrices.load()
+            report["official"] = official.as_dict()
+        except Exception as exc:
+            log.warning("official price files unavailable, prices left unchanged: %s", exc)
+            report["price_error"] = str(exc)
 
         if official is not None:
-            still_needed = []
+            unpriced = []
             for sec in resolved:
+                # The statement does not always carry an exchange symbol, but by
+                # this point the security has resolved to one; falling back to it
+                # prices holdings whose statement listed only a name.
                 price, source = official.lookup(
                     sec.get("isin") or "", sec["name"],
-                    sec.get("nse_symbol") or "", sec.get("bse_code") or "")
+                    sec.get("nse_symbol") or sec.get("code") or "",
+                    sec.get("bse_code") or "")
                 if price is None:
-                    still_needed.append(sec)
+                    unpriced.append(sec["name"])
                     continue
                 upsert_price(db, isin=(sec["isin"] or "").upper() or None,
                              symbol=sec["code"], name=sec["name"], cmp_value=price,
                              ratios={}, financials=None, now=now, price_source=source)
                 report["priced"].append({"name": sec["name"], "code": sec["code"],
                                          "how": source, "cmp": price})
-                sec["priced_officially"] = True
             db.commit()
-            say(f"priced {len(report['priced'])} from official files "
-                f"({len(still_needed)} need Screener)")
-            # Statements still come from Screener, so anything whose fundamentals
-            # are stale is fetched even though its price is already official.
-            resolved = still_needed + [s2 for s2 in resolved if s2.get("priced_officially")
-                                       and _needs_fundamentals(db, s2, s2["code"],
-                                                               now - timedelta(days=FUNDAMENTALS_MAX_AGE_DAYS))]
+            report["unpriced"] = unpriced
+            say(f"priced {len(report['priced'])} at previous close"
+                + (f"; {len(unpriced)} not in the close files" if unpriced else ""))
+
+        # Screener is now only visited for statements, never for a price, so the
+        # list narrows to securities whose stored financials have gone stale.
+        # A security the close files could not price is not fetched for a price
+        # it would not be allowed to use.
+        resolved = [sec for sec in resolved
+                    if _needs_fundamentals(db, sec, sec["code"],
+                                           now - timedelta(days=FUNDAMENTALS_MAX_AGE_DAYS))]
 
         if not resolved:
             return report
@@ -358,25 +367,18 @@ def refresh_client(client_id=None, *, delay: float = DEFAULT_DELAY, max_age: flo
                     say(f"  [{done}/{len(resolved)}] {sec['name'][:34]} FAILED - {error}")
                     continue
 
-                # Keep the official price where we already have one; this pass is
-                # then only about the statements behind the checklist.
-                already_official = sec.get("priced_officially")
+                # Statements only. The price on this page is an intraday quote,
+                # not a published close, so it is deliberately discarded —
+                # cmp_value=None leaves whatever the BhavCopy pass stored.
                 upsert_price(db, isin=(sec["isin"] or "").upper() or None,
                              symbol=sec["code"], name=sec["name"],
-                             cmp_value=None if already_official else result.cmp,
+                             cmp_value=None,
                              ratios=result.ratios, financials=result.financials, now=now,
                              schedules_refreshed=bool(result.financials.get("schedules")),
-                             price_source=None if already_official else "screener.in")
+                             price_source=None)
                 db.commit()
-                if not already_official:
-                    report["priced"].append({"name": sec["name"], "code": sec["code"],
-                                             "how": "screener.in", "cmp": result.cmp})
-                if already_official:
-                    say(f"  [{done}/{len(resolved)}] {sec['code']:12} {'statements':>12}  "
-                        f"{sec['name'][:32]} (price already official)")
-                else:
-                    say(f"  [{done}/{len(resolved)}] {sec['code']:12} {result.cmp:>12,.2f}  "
-                        f"{sec['name'][:32]} via screener.in")
+                say(f"  [{done}/{len(resolved)}] {sec['code']:12} {'statements':>12}  "
+                    f"{sec['name'][:32]}")
 
         # ── Gap fill ──
         # Screener has no page for a mutual fund, so those securities never even
@@ -389,13 +391,17 @@ def refresh_client(client_id=None, *, delay: float = DEFAULT_DELAY, max_age: flo
                             + [{"name": f["name"], "isin": "", "nse_symbol": "", "bse_code": ""}
                                for f in report["failed"]])
                 if g["name"] not in priced_names]
-        if gaps and not use_official:
+        if gaps:
             by_name = {sec["name"]: sec for sec in securities}
-            try:
-                filler = OfficialPrices.load()
-            except Exception as exc:
-                log.warning("official gap-fill unavailable: %s", exc)
-                filler = None
+            # A mutual fund never resolves to a Screener code, so it is absent
+            # from the pass above and only reachable here, by AMFI NAV.
+            filler = official
+            if filler is None:
+                try:
+                    filler = OfficialPrices.load()
+                except Exception as exc:
+                    log.warning("official gap-fill unavailable: %s", exc)
+                    filler = None
             if filler is not None:
                 filled = 0
                 for gap in gaps:
@@ -416,8 +422,8 @@ def refresh_client(client_id=None, *, delay: float = DEFAULT_DELAY, max_age: flo
                 if filled:
                     db.commit()
                     report["gap_filled"] = filled
-                    say(f"filled {filled} price(s) Screener cannot provide "
-                        f"(mutual funds / unlisted) from official files")
+                    say(f"filled {filled} price(s) for instruments with no Screener "
+                        f"page at all (mutual funds / unlisted)")
         return report
     except Exception as exc:
         log.error("market refresh failed for client %s: %s", client_id, exc)

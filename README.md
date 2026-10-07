@@ -146,27 +146,34 @@ Equivalent API call:
 curl -X POST http://localhost:8000/api/market/import -F "file=@screener_export.csv"
 ```
 
-### Alternative: fetch CMP automatically
-`scripts/fetch_cmp.py` pulls the current price for every stock you hold straight from Screener's public company pages, so prices can be refreshed without a manual export.
+### How CMP is set: the previous close
+
+**Every price is the previous close, read from the exchanges' own end-of-day files.** Screener is never asked for a price — its page carries an intraday quote, which is not a figure a client can reconcile against a contract note.
+
+| Instrument | Source | Label shown |
+|---|---|---|
+| NSE-listed equity | NSE BhavCopy | `NSE close` |
+| BSE-only equity | BSE BhavCopy | `BSE close` |
+| Mutual fund | AMFI NAVAll | `AMFI NAV` |
+
+Three file downloads price the entire book, so cost does not grow with the number of holdings, and there is no per-security rate limit to respect. Files are cached for 6 hours (`OFFICIAL_PRICES_MAX_AGE_HOURS`) and refreshed by the nightly job.
+
+Prices refresh on their own after an upload and at 01:00 IST. To force a run:
 
 ```bash
 python -m scripts.fetch_cmp                  # every holding in the database
 python -m scripts.fetch_cmp --client 17      # one client
 python -m scripts.fetch_cmp --dry-run        # resolve symbols, fetch nothing
-python -m scripts.fetch_cmp --max-age 30     # skip anything priced in the last 30 min
-python -m scripts.fetch_cmp --delay 3        # be gentler (default 2s between requests)
+python -m scripts.fetch_cmp --no-schedules   # skip the extra statement requests
 ```
 
-How it stays well-behaved:
+What this guarantees:
 
-* **Public pages only** — it requests `/company/<CODE>/` and nothing else. No login, no session cookie, no premium credentials, so a scraping mistake cannot expose or burn your account.
-* **robots.txt is enforced in code.** Screener disallows `/*?q=` (its search endpoint), `/*?sort=`, `/*?limit=`, `/*?page=`, `/user/*` and `/company/source/quarter/*`. Every URL is checked with `urllib.robotparser` before it is fetched, and the run aborts if robots.txt cannot be read at all.
-* **Symbols come from NSE, not Screener search.** Because search is disallowed, ISIN → ticker resolution uses [NSE's published equity master](https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv), cached in `data/` and refreshed weekly. Your demat statements already carry ISINs.
-* **One request at a time, spaced out.** No concurrency, a configurable delay, exponential backoff, and `Retry-After` respected on HTTP 429/503.
-* **A failure never becomes a number.** If `Current Price` cannot be found the security is reported as failed and the old price is left untouched — a parse break can never silently write a wrong or zero price.
-* **Duplicate work is skipped.** One page fetch per security even when it is held in several accounts, and `--max-age` avoids refetching recent prices.
+* **A failure never becomes a number.** If the close files cannot be downloaded, stored prices are left untouched rather than falling back to a scrape. If a security is in no close file, it carries no price at all and the dashboard shows it at its statement value, labelled *at statement* — a stale quote is never passed off as current.
+* **Screener is statements-only.** It is still fetched for the ten-year history and shareholding behind the scorecard, over public company pages, with `robots.txt` enforced in code via `urllib.robotparser` and a rate limiter shared across worker threads.
+* **Duplicate work is skipped.** One lookup per security however many clients hold it.
 
-Resolution is imperfect by nature: mutual funds, bonds, delisted names and cash lines have no Screener equity page, and the run lists each one with the reason. Prices on the page are shown to Screener's own precision (whole rupees for large caps, decimals for small ones), so a market value can differ from a broker's by a fraction of a percent.
+Delisted and suspended scrips appear in no close file and so carry no price — the refresh reports each one by name.
 
 ### 3. Check coverage
 ```bash
@@ -231,7 +238,7 @@ wealth-management/
 │   │
 │   ├── yahoo_fundamentals.py   # Yahoo statements + industry/sector (primary source)
 │   ├── screener_scraper.py     # Screener company pages: 10y history, shareholding
-│   ├── official_prices.py      # NSE/BSE BhavCopy + AMFI NAV files
+│   ├── official_prices.py      # NSE/BSE BhavCopy + AMFI NAV — the only price source
 │   ├── market_data.py          # Screener CSV parsing + holding→security matching
 │   ├── market_refresh.py       # Shared price/statement refresh (CLI + upload)
 │   ├── daily_refresh.py        # Nightly pass, keyed on distinct held securities
@@ -254,7 +261,7 @@ wealth-management/
 │   └── dashboard.js            # Rendering, scorecard, sector tags
 ├── scripts/
 │   ├── daily_refresh.py        # The nightly job, standalone (Task Scheduler)
-│   └── fetch_cmp.py            # Manual price/statement pull from Screener
+│   └── fetch_cmp.py            # Manual refresh (previous close + statements)
 ├── data/                       # Cached exchange masters & BhavCopy (gitignored)
 ├── uploads/                    # Client statements (gitignored — never committed)
 ├── .env.example                # Environment template
