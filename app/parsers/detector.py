@@ -87,6 +87,17 @@ _HEADER_RULES = (
     ("bse_code",
      (r'bse[\s_]*code', r'\bbse\b', r'scrip[\s_]*code', r'security[\s_]*code'),
      (r'\bnse\b',)),
+    # Per-unit prices. Never a value or a cost on their own, but a statement that
+    # reports only a price and a quantity (several broker holdings exports do)
+    # has everything needed to derive both — see _derive_missing_amounts.
+    ("unit_price",
+     (r'(prev\.?\w*|previous|last|closing|close|market)\s*(closing\s*)?price',
+      r'\bltp\b', r'\bcmp\b', r'current\s*price', r'\bnav\b', r'\brate\b'),
+     (r'aver', r'\bavg\b', r'cost', r'buy', r'purchase')),
+    ("unit_cost",
+     (r'(aver\w*|avg\.?)\s*(price|cost|rate)?', r'buy\s*(price|rate)',
+      r'purchase\s*(price|rate)', r'cost\s*(price|per|\/)\s*(unit|share)?'),
+     (r'\btotal\b', r'\bvalue\b')),
 )
 
 
@@ -263,6 +274,32 @@ def detect_and_parse(file_path: str, file_name: str = "") -> ParsedDocument:
     return doc
 
 
+def _derive_missing_amounts(df) -> None:
+    """Fill current_value / total_cost from quantity x price, in place.
+
+    Several broker holdings exports report a quantity and a per-unit price but
+    no money column at all, so there is nothing to map and the statement used to
+    be rejected outright. Quantity x price is the same arithmetic the broker
+    would have printed. Nothing is overwritten: a statement that states its own
+    value keeps it, because a stated figure may include charges this product
+    cannot see.
+    """
+    if "quantity" not in df.columns:
+        return
+    qty = df["quantity"].map(clean_num)
+
+    for target, price_column in (("current_value", "unit_price"),
+                                 ("total_cost", "unit_cost")):
+        if target in df.columns or price_column not in df.columns:
+            continue
+        price = df[price_column].map(clean_num)
+        derived = qty * price
+        if derived.fillna(0).abs().sum() == 0:
+            continue                      # nothing usable; leave the column absent
+        df[target] = derived
+        print(f"Derived {target} as quantity x {price_column}")
+
+
 def populate_holdings(df, doc: ParsedDocument) -> ParsedDocument:
     """Map a statement DataFrame onto the schema and fill ``doc.holdings``.
 
@@ -308,15 +345,33 @@ Return ONLY a JSON dictionary: {"raw_header_name": "valid_database_column"}"""
         except Exception as e:
             print(f"LLM Header Mapping Failed: {e}")
 
-    if "security_name" not in mapping.values() or "current_value" not in mapping.values():
-        print(f"Could not locate name/value columns in {raw_columns} (mapped: {mapping})")
-        return doc
-
     df = df.copy()
 
     df = df.rename(columns=mapping)
     # Defensive: a raw statement can itself repeat a header label
     df = df.loc[:, ~df.columns.duplicated()]
+
+    # A broker export may identify a security only by its ticker ("Symbol"),
+    # with no company-name column at all. The ticker is a perfectly good
+    # identifier — the resolver maps it to a company later — so it stands in as
+    # the name rather than the statement being rejected. It is copied, not
+    # moved, because the ticker is also the key that prices the holding.
+    if "security_name" not in df.columns:
+        for source in ("nse_symbol", "bse_code"):
+            if source in df.columns:
+                df["security_name"] = df[source]
+                print(f"No name column; using {source!r} as the security name")
+                break
+
+    if "security_name" not in df.columns:
+        print(f"Could not locate a name column in {raw_columns} (mapped: {mapping})")
+        return doc
+
+    _derive_missing_amounts(df)
+
+    if "current_value" not in df.columns:
+        print(f"Could not locate or derive a value column in {raw_columns} (mapped: {mapping})")
+        return doc
         
     # ── Set has_cost_data flag ──
     doc.has_cost_data = 'total_cost' in df.columns
