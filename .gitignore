@@ -4,9 +4,10 @@
 .env.local
 
 # ── Client data ─────────────────────────────────────────────────────────────
-# Uploaded statements are real client records: they stay on the machine that
-# ingested them and never reach the repository.
+# Uploaded statements and generated client reports are real client records:
+# they stay on the machine that produced them and never reach the repository.
 uploads/
+*_Holdings.xlsx
 *.db
 *.db-journal
 *.sqlite3
