@@ -1,26 +1,72 @@
 // ════════ STATE ════════
 const urlParams = new URLSearchParams(window.location.search);
-const clientId = urlParams.get('client_id');
-if(!clientId) window.location.href = 'clients.html';
+let clientId = urlParams.get('client_id');
+let currentUser = null;
 
-let currentTab = 'overview';
+const DASHBOARD_TABS = new Set(['overview', 'portfolio', 'performance', 'risk', 'insights']);
+let currentTab = DASHBOARD_TABS.has(window.location.hash.slice(1)) ? window.location.hash.slice(1) : 'overview';
 let currentAccountId = null; // null = Family
+let healthThreeInstance = null;
+let healthOutsideClickHandler = null;
+let selectedHealthPillar = null;
+let portfolioHealthRequestId = 0;
+let portfolioHealthRequest = null;
+let currentOverviewScorecardData = null;
+const portfolioScorecardCache = new Map();
+const scorecardInstances = new Map();
+const scorecardGroupSelections = {};
+const SCORECARD_API_URL = `${window.location.protocol}//${window.location.hostname}:8050/api/scorecard`;
+const HEALTH_PILLARS = ['Growth', 'Quality', 'Valuation'];
+
+const HEALTH_COLORS = {
+  Growth: '#3573c6',
+  Quality: '#17916b',
+  Valuation: '#c8862a',
+  'Overall health': '#1c3b32'
+};
 
 let apiData = {
     overview: null,
     portfolio: null,
     performance: null,
     risk: null,
-    insights: null
+    insights: null,
+    portfolio_scorecard_health: null
 };
 
 // ════════ INITIALIZATION ════════
+function updateSidebarProfile() {
+    const nameEl = document.getElementById('sidebar-user-name');
+    const roleEl = document.getElementById('sidebar-user-role');
+    if (!nameEl || !roleEl) return;
+
+    const displayName = currentUser?.role === 'admin'
+        ? (currentUser.name || 'Administrator')
+        : (apiData.overview?.client_name || currentUser?.name || 'Client');
+
+    const roleText = currentUser?.role === 'admin'
+        ? 'Admin Portal'
+        : (currentUser?.client_id ? `Client #${currentUser.client_id}` : 'Client Portal');
+
+    nameEl.textContent = displayName;
+    roleEl.textContent = roleText;
+}
+
 async function initDashboard() {
+  const authResponse = await fetch('/api/auth/me');
+  if (!authResponse.ok) { window.location.replace('login.html'); return; }
+  currentUser = await authResponse.json();
+  if (currentUser.role === 'client') clientId = String(currentUser.client_id);
+  if (!clientId) { window.location.replace('admin.html'); return; }
     await fetchAllData();
+  document.querySelector('.mn').style.visibility = 'visible';
+    updateSidebarProfile();
     renderDashboard();
 }
 
 async function fetchAllData() {
+  portfolioHealthRequestId += 1;
+  portfolioHealthRequest = null;
     const actParam = currentAccountId ? `?account=${currentAccountId}` : '';
     
     // Check overview first to see if it's still processing
@@ -56,6 +102,148 @@ async function fetchAllData() {
     apiData.performance = await pfRes.json();
     apiData.risk = await rRes.json();
     apiData.insights = await iRes.json();
+    apiData.portfolio_scorecard_health = null;
+}
+
+function scorecardIdentifier(holding) {
+  return String(holding.isin || holding.nse_symbol || holding.security_name || '').trim();
+}
+
+function stockReportUrl(holding, index) {
+  const account = currentAccountId == null ? 'family' : String(currentAccountId);
+  const listKey = `vikabh-stock-list:${clientId}:${account}`;
+  const holdings = apiData.portfolio?.holdings || [];
+  try {
+    sessionStorage.setItem(listKey, JSON.stringify(holdings.map(item => ({
+      security_name: item.security_name,
+      isin: item.isin,
+      nse_symbol: item.nse_symbol,
+      sector: item.sector,
+      sector_group: item.sector_group,
+      industry: item.industry,
+      effective_value: item.effective_value,
+      weight_pct: item.weight_pct,
+      cmp: item.cmp,
+      quantity: item.quantity
+    }))));
+  } catch (_error) {
+    // The report still opens for the selected stock when storage is unavailable.
+  }
+
+  const params = new URLSearchParams({
+    identifier: scorecardIdentifier(holding),
+    name: holding.security_name || '',
+    client_id: String(clientId || ''),
+    account,
+    source_tab: currentTab,
+    list_key: listKey,
+    index: String(index)
+  });
+  return `stock-report.html?${params.toString()}`;
+}
+
+function openPortfolioStock(index) {
+  const holding = (apiData.portfolio?.holdings || [])[Number(index)];
+  if (!holding) return;
+  window.location.href = stockReportUrl(holding, Number(index));
+}
+
+function requestScorecard(holding) {
+  const identifier = scorecardIdentifier(holding);
+  if (!identifier) return Promise.resolve(null);
+  const key = identifier.toUpperCase();
+  if (portfolioScorecardCache.has(key)) return portfolioScorecardCache.get(key);
+
+  const request = (async () => {
+    try {
+      const response = await fetch(`${SCORECARD_API_URL}?identifier=${encodeURIComponent(identifier)}`);
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return payload.scorecard && Array.isArray(payload.scorecard.groups) ? payload : null;
+    } catch (_error) {
+      return null;
+    }
+  })();
+  portfolioScorecardCache.set(key, request);
+  return request;
+}
+
+function aggregatePortfolioScorecards(holdings, results, signature) {
+  const totalValue = holdings.reduce((total, holding) => total + Math.max(0, Number(holding.effective_value) || 0), 0);
+  const groupTotals = Object.fromEntries(HEALTH_PILLARS.map(name => [name, {weightedPct: 0, value: 0, criteria: new Map()}]));
+  let scoredValue = 0;
+  let weightedTotal = 0;
+  let scoredHoldings = 0;
+
+  results.forEach(({holding, payload}) => {
+    const value = Math.max(0, Number(holding.effective_value) || 0);
+    const scorecard = payload?.scorecard;
+    if (!scorecard || value <= 0 || !(Number(scorecard.max_total) > 0)) return;
+
+    scoredValue += value;
+    scoredHoldings += 1;
+    weightedTotal += (Number(scorecard.total_score) / Number(scorecard.max_total)) * 100 * value;
+
+    (scorecard.groups || []).forEach(group => {
+      const target = groupTotals[group.name];
+      const maxScore = Number(group.max_score);
+      if (!target || !(maxScore > 0)) return;
+      target.weightedPct += (Number(group.score) / maxScore) * 100 * value;
+      target.value += value;
+      (group.criteria || []).forEach(criterion => {
+        const points = Number(criterion.pts);
+        const score = Number(criterion.score);
+        if (!(points > 0) || !Number.isFinite(score)) return;
+        const item = target.criteria.get(criterion.criterion) || {weightedPct: 0, value: 0, companies: 0};
+        item.weightedPct += (score / points) * 100 * value;
+        item.value += value;
+        item.companies += 1;
+        target.criteria.set(criterion.criterion, item);
+      });
+    });
+  });
+
+  const groups = Object.fromEntries(HEALTH_PILLARS.map(name => {
+    const group = groupTotals[name];
+    return [name, {
+      percentage: group.value ? Number((group.weightedPct / group.value).toFixed(1)) : null,
+      coverage_pct: totalValue ? Number((group.value / totalValue * 100).toFixed(1)) : 0,
+      criteria: [...group.criteria.entries()].map(([criterion, item]) => ({
+        criterion,
+        percentage: Number((item.weightedPct / item.value).toFixed(1)),
+        coverage_pct: totalValue ? Number((item.value / totalValue * 100).toFixed(1)) : 0,
+        companies: item.companies
+      }))
+    }];
+  }));
+
+  return {
+    status: 'ready',
+    signature,
+    score_pct: scoredValue ? Number((weightedTotal / scoredValue).toFixed(1)) : null,
+    scored_weight_pct: totalValue ? Number((scoredValue / totalValue * 100).toFixed(1)) : 0,
+    scored_holdings: scoredHoldings,
+    unscored_holdings: Math.max(0, holdings.length - scoredHoldings),
+    groups
+  };
+}
+
+function loadPortfolioScorecardHealth() {
+  const holdings = apiData.portfolio?.holdings || [];
+  const signature = `${clientId}|${currentAccountId || 'family'}|${holdings.map(h => `${scorecardIdentifier(h)}:${h.effective_value || 0}`).join(';')}`;
+  if (apiData.portfolio_scorecard_health?.signature === signature && apiData.portfolio_scorecard_health.status === 'ready') return;
+  if (portfolioHealthRequest?.signature === signature) return;
+
+  const requestId = ++portfolioHealthRequestId;
+  portfolioHealthRequest = {signature};
+  apiData.portfolio_scorecard_health = {status: 'loading', signature};
+  Promise.all(holdings.map(async holding => ({holding, payload: await requestScorecard(holding)})))
+    .then(results => {
+      if (requestId !== portfolioHealthRequestId) return;
+      apiData.portfolio_scorecard_health = aggregatePortfolioScorecards(holdings, results, signature);
+      portfolioHealthRequest = null;
+      if (currentTab === 'overview') renderDashboard();
+    });
 }
 
 // ════════ UI UPDATES ════════
@@ -67,6 +255,8 @@ function formatCr(val) {
 }
 
 function renderDashboard() {
+    updateSidebarProfile();
+
     // 1. Update Header / Dropdown
     const mainEl = document.querySelector('.mn');
     
@@ -82,6 +272,7 @@ function renderDashboard() {
           <div><h1 style="text-transform: capitalize;">${currentTab}</h1><p>Your Wealth, Our Focus.</p></div>
           <div class="hdr-r">
             <div class="hdr-i"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><strong>${apiData.overview.client_name || 'Client'}</strong></div>
+            <button class="acct" onclick="window.location.href='upload.html${currentUser.role === 'admin' ? `?client_id=${clientId}` : ''}'">Add statements</button>
             <select class="acct" onchange="changeAccount(this.value)">
               <option value="family" ${currentAccountId === null ? 'selected' : ''}>Family Portfolio ▾</option>
               ${(apiData.overview.accounts || []).map(a => `<option value="${a.id}" ${currentAccountId == a.id ? 'selected' : ''}>${a.label}</option>`).join('')}
@@ -99,9 +290,14 @@ function renderDashboard() {
     else if(currentTab === 'insights') contentHtml = renderInsights();
     else contentHtml = `<div class="crd"><p>Work in progress.</p></div>`;
 
+    destroyHealthTriangle();
     mainEl.innerHTML = headerHtml + contentHtml;
     if(currentTab === 'overview' || currentTab === 'performance') {
         setTimeout(initChart, 50); // allow DOM to settle
+    }
+    if (currentTab === 'overview') {
+      initHealthTriangle();
+      loadPortfolioScorecardHealth();
     }
 }
 
@@ -109,74 +305,440 @@ function renderDashboard() {
 let myChart = null;
 
 function initChart() {
-    if(typeof Chart === 'undefined') {
-        setTimeout(initChart, 200);
-        return;
+  if (typeof Chart === 'undefined') {
+    setTimeout(initChart, 200);
+    return;
+  }
+  const o = apiData.overview;
+  const canvas = document.getElementById('pc');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (myChart) myChart.destroy();
+
+  const targetReturn = o.return_pct || 15.0;
+  const benchmarkReturn = targetReturn * 0.7;
+  const portfolioData = [];
+  const benchmarkData = [];
+  for (let i = 0; i < 12; i += 1) {
+    const progress = i / 11;
+    const curve = Math.pow(progress, 1.2);
+    const portfolioNoise = (Math.random() - 0.5) * (targetReturn * 0.15);
+    const benchmarkNoise = (Math.random() - 0.5) * (benchmarkReturn * 0.15);
+    if (i === 0) {
+      portfolioData.push(0);
+      benchmarkData.push(0);
+    } else if (i === 11) {
+      portfolioData.push(targetReturn);
+      benchmarkData.push(benchmarkReturn);
+    } else {
+      portfolioData.push(targetReturn * curve + portfolioNoise);
+      benchmarkData.push(benchmarkReturn * curve + benchmarkNoise);
     }
-    const o = apiData.overview;
-    if(document.getElementById('pc')) {
-      const ctx = document.getElementById('pc').getContext('2d');
-      if(myChart) myChart.destroy();
-      
-      // Generate realistic looking placeholder data based on the actual return_pct
-      const targetReturn = o.return_pct || 15.0; // Default to 15% if no data
-      const benchmarkReturn = targetReturn * 0.7; // Benchmark is slightly worse
-      
-      const pd = [];
-      const bd = [];
-      
-      // Generate 12 months of data ending at the target return
-      for (let i = 0; i < 12; i++) {
-          const progress = (i / 11); // 0.0 to 1.0
-          // Add some random noise and curve
-          const curve = Math.pow(progress, 1.2); 
-          const noiseP = (Math.random() - 0.5) * (targetReturn * 0.15);
-          const noiseB = (Math.random() - 0.5) * (benchmarkReturn * 0.15);
-          
-          if (i === 0) {
-              pd.push(0);
-              bd.push(0);
-          } else if (i === 11) {
-              pd.push(targetReturn);
-              bd.push(benchmarkReturn);
-          } else {
-              pd.push(targetReturn * curve + noiseP);
-              bd.push(benchmarkReturn * curve + noiseB);
-          }
-      }
-      
-      const lb = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
-    
-    const grad = ctx.createLinearGradient(0,0,0,300);
-    grad.addColorStop(0,'rgba(37,99,235,0.15)');
-    grad.addColorStop(1,'rgba(37,99,235,0)');
-    
-    myChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: lb,
-        datasets: [
-          {label:'Portfolio',data:pd,borderColor:'#2563eb',borderWidth:2.5,backgroundColor:grad,fill:true,tension:0.4,pointRadius:0,pointHoverRadius:6},
-          {label:'Benchmark (Nifty 50)',data:bd,borderColor:'#94a3b8',borderWidth:2,borderDash:[4,4],tension:0.4,pointRadius:0,pointHoverRadius:4}
-        ]
+  }
+  const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+  gradient.addColorStop(0, 'rgba(37,99,235,0.15)');
+  gradient.addColorStop(1, 'rgba(37,99,235,0)');
+  myChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'],
+      datasets: [
+        {label: 'Portfolio', data: portfolioData, borderColor: '#2563eb', borderWidth: 2.5, backgroundColor: gradient, fill: true, tension: 0.4, pointRadius: 0, pointHoverRadius: 6},
+        {label: 'Benchmark (Nifty 50)', data: benchmarkData, borderColor: '#94a3b8', borderWidth: 2, borderDash: [4, 4], tension: 0.4, pointRadius: 0, pointHoverRadius: 4}
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {mode: 'index', intersect: false},
+      scales: {
+        x: {grid: {color: 'rgba(0,0,0,.04)', drawBorder: false}, ticks: {color: '#94a3b8', font: {size: 9.5}}, border: {display: false}},
+        y: {grid: {color: 'rgba(0,0,0,.04)', drawBorder: false}, ticks: {color: '#94a3b8', font: {size: 9.5}, callback: value => value + '%'}, border: {display: false}}
       },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          scales: {
-            x: { grid: { color: 'rgba(0,0,0,.04)', drawBorder: false }, ticks: { color: '#94a3b8', font: { size: 9.5 } }, border: { display: false } },
-            y: { grid: { color: 'rgba(0,0,0,.04)', drawBorder: false }, ticks: { color: '#94a3b8', font: { size: 9.5 }, callback: v => v + '%' }, border: { display: false } }
-          },
-          plugins: { legend: { display: false } }
-        }
-      });
+      plugins: {legend: {display: false}}
     }
+  });
+}
+
+function initHealthTriangle() {
+  const stage = document.getElementById('health-three-stage');
+  const host = document.getElementById('health-three-canvas');
+  if (!stage || !host) return;
+
+  document.querySelectorAll('.health-three-marker, .health-pillar-control').forEach(button => {
+    button.addEventListener('click', () => selectHealthPillar(button.dataset.healthSelect));
+  });
+  const detail = document.getElementById('health-detail');
+  if (detail) {
+    detail.addEventListener('click', event => {
+      if (event.target.closest('.health-detail-close')) closeHealthDetail();
+    });
+    closeHealthDetail();
+  }
+  if (healthOutsideClickHandler) document.removeEventListener('click', healthOutsideClickHandler);
+  healthOutsideClickHandler = event => {
+    const layout = document.getElementById('health-scene-layout');
+    const target = event.target;
+    if (!layout?.classList.contains('has-detail') || !(target instanceof Element)) return;
+    if (target.closest('.health-detail') || target.closest('[data-health-select]')) return;
+    closeHealthDetail();
+  };
+  document.addEventListener('click', healthOutsideClickHandler);
+
+  if (!window.THREE) {
+    host.innerHTML = '<div class="health-three-fallback">The 3D health view is unavailable.</div>';
+    return;
+  }
+
+  const THREE = window.THREE;
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({alpha: true, antialias: true});
+  } catch (error) {
+    console.error('Could not create the health scene:', error);
+    host.innerHTML = '<div class="health-three-fallback">The 3D health view is unavailable.</div>';
+    return;
+  }
+
+  const portfolioHealth = apiData.portfolio_scorecard_health || {};
+  const scores = Object.fromEntries(HEALTH_PILLARS.map(name => [name, portfolioHealth.groups?.[name]?.percentage ?? null]));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 60);
+  camera.position.set(0, 0, 6.8);
+  const group = new THREE.Group();
+  group.scale.setScalar(1);
+  group.position.y = 0;
+  scene.add(group);
+  scene.add(new THREE.HemisphereLight(0xe8fff4, 0x315247, 1.8));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.3);
+  keyLight.position.set(-3, 4, 6);
+  scene.add(keyLight);
+  const rimLight = new THREE.PointLight(0x54d9a6, 1.4, 12);
+  rimLight.position.set(3, -1, -2);
+  scene.add(rimLight);
+
+  const vertices = [
+    new THREE.Vector3(0, 1.55, 0.08),
+    new THREE.Vector3(1.35, -0.78, 0.08),
+    new THREE.Vector3(-1.35, -0.78, 0.08)
+  ];
+  const backVertices = vertices.map(point => new THREE.Vector3(point.x, point.y, -0.34));
+  const faceShape = new THREE.Shape();
+  faceShape.moveTo(vertices[0].x, vertices[0].y);
+  faceShape.lineTo(vertices[1].x, vertices[1].y);
+  faceShape.lineTo(vertices[2].x, vertices[2].y);
+  faceShape.closePath();
+  const faceGeometry = new THREE.ShapeGeometry(faceShape);
+  const faceMaterial = new THREE.MeshStandardMaterial({
+    color: 0x16725f, transparent: true, opacity: 0.12,
+    roughness: 0.42, metalness: 0.12, side: THREE.DoubleSide, depthWrite: false
+  });
+  const frontFace = new THREE.Mesh(faceGeometry, faceMaterial);
+  frontFace.position.z = 0.08;
+  group.add(frontFace);
+  const backFace = new THREE.Mesh(faceGeometry, faceMaterial.clone());
+  backFace.position.z = -0.34;
+  group.add(backFace);
+
+  const frameMaterial = new THREE.MeshStandardMaterial({color: 0x568f7d, roughness: 0.3, metalness: 0.55});
+  const edgeMaterial = new THREE.MeshStandardMaterial({color: 0xb6dfcd, roughness: 0.32, metalness: 0.35});
+  const addBeam = (start, end, radius, material) => {
+    const direction = end.clone().sub(start);
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius, direction.length(), 10), material
+    );
+    beam.position.copy(start).add(end).multiplyScalar(0.5);
+    beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+    group.add(beam);
+  };
+  for (let index = 0; index < 3; index += 1) {
+    const next = (index + 1) % 3;
+    addBeam(vertices[index], vertices[next], 0.025, frameMaterial);
+    addBeam(backVertices[index], backVertices[next], 0.018, edgeMaterial);
+    addBeam(vertices[index], backVertices[index], 0.017, edgeMaterial);
+  }
+
+  const markerPositions = {};
+  const addGauge = (name, position, score, isCore = false) => {
+    const color = new THREE.Color(HEALTH_COLORS[name]);
+    const gauge = new THREE.Group();
+    gauge.position.copy(position);
+    group.add(gauge);
+    const safeScore = score == null ? 0 : Math.max(0, Math.min(100, Number(score)));
+    const material = new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.2,
+      metalness: 0.34,
+      emissive: color,
+      emissiveIntensity: 0.14 + safeScore / 500
+    });
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(isCore ? 0.22 : 0.17, 28, 20), material);
+    gauge.add(sphere);
+    markerPositions[name] = position.clone();
+  };
+
+  addGauge('Growth', vertices[0], scores.Growth);
+  addGauge('Quality', vertices[1], scores.Quality);
+  addGauge('Valuation', vertices[2], scores.Valuation);
+  const overallPosition = new THREE.Vector3(0, 0, 0.34);
+  addGauge('Overall health', overallPosition, portfolioHealth.score_pct, true);
+  markerPositions['Overall health'].z += 0.48;
+  markerPositions.Growth.y += 0.43;
+  markerPositions.Quality.x += 0.4;
+  markerPositions.Quality.y -= 0.28;
+  markerPositions.Valuation.x -= 0.4;
+  markerPositions.Valuation.y -= 0.28;
+
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.domElement.className = 'health-three-renderer';
+  renderer.domElement.setAttribute('aria-hidden', 'true');
+  host.replaceChildren(renderer.domElement);
+
+  const markers = [...stage.querySelectorAll('[data-health-marker]')];
+  markers.forEach(marker => marker.style.setProperty('--marker-color', HEALTH_COLORS[marker.dataset.healthMarker]));
+  const resize = () => {
+    const width = Math.max(1, stage.clientWidth);
+    const height = Math.max(1, stage.clientHeight);
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.position.z = Math.max(6.8, 2.1 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
+    camera.updateProjectionMatrix();
+  };
+  resize();
+  const resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(stage);
+  window.addEventListener('resize', resize);
+
+  let dragging = false;
+  let hovered = false;
+  let lastX = 0;
+  const canvas = renderer.domElement;
+  stage.addEventListener('pointerenter', () => { hovered = true; });
+  stage.addEventListener('pointerleave', () => { hovered = false; });
+  canvas.addEventListener('pointerdown', event => {
+    dragging = true;
+    lastX = event.clientX;
+    canvas.setPointerCapture(event.pointerId);
+    canvas.style.cursor = 'grabbing';
+  });
+  canvas.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    const dx = event.clientX - lastX;
+    lastX = event.clientX;
+    group.rotation.z -= Math.abs(dx) * 0.006;
+  });
+  const releasePointer = () => {
+    if (!dragging) return;
+    dragging = false;
+    canvas.style.cursor = 'grab';
+  };
+  canvas.addEventListener('pointerup', releasePointer);
+  canvas.addEventListener('pointercancel', () => {
+    dragging = false;
+    canvas.style.cursor = 'grab';
+  });
+  canvas.style.cursor = 'grab';
+
+  healthThreeInstance = {scene, renderer, resizeObserver, resize, frame: 0};
+  let previousTime = performance.now();
+  const updateMarkers = () => {
+    group.updateMatrixWorld(true);
+    camera.updateMatrixWorld();
+    markers.forEach(marker => {
+      const position = markerPositions[marker.dataset.healthMarker].clone();
+      position.applyMatrix4(group.matrixWorld).project(camera);
+      const projectedX = (position.x * 0.5 + 0.5) * stage.clientWidth;
+      const projectedY = (-position.y * 0.5 + 0.5) * stage.clientHeight;
+      const insetX = marker.offsetWidth / 2 + 5;
+      const insetY = marker.offsetHeight / 2 + 5;
+      marker.style.left = `${Math.max(insetX, Math.min(stage.clientWidth - insetX, projectedX))}px`;
+      marker.style.top = `${Math.max(insetY, Math.min(stage.clientHeight - insetY, projectedY))}px`;
+      marker.style.opacity = position.z > 1 ? '0' : '1';
+    });
+  };
+  const animate = now => {
+    if (!healthThreeInstance) return;
+    healthThreeInstance.frame = requestAnimationFrame(animate);
+    const delta = Math.min((now - previousTime) / 1000, 0.05);
+    previousTime = now;
+    if (!dragging && !hovered) group.rotation.z -= delta * 0.28;
+    renderer.render(scene, camera);
+    updateMarkers();
+  };
+  healthThreeInstance.frame = requestAnimationFrame(animate);
+}
+
+function destroyHealthTriangle() {
+  if (healthOutsideClickHandler) {
+    document.removeEventListener('click', healthOutsideClickHandler);
+    healthOutsideClickHandler = null;
+  }
+  if (!healthThreeInstance) return;
+  const instance = healthThreeInstance;
+  healthThreeInstance = null;
+  cancelAnimationFrame(instance.frame);
+  instance.resizeObserver.disconnect();
+  window.removeEventListener('resize', instance.resize);
+  const geometries = new Set();
+  const materials = new Set();
+  instance.scene.traverse(object => {
+    if (object.geometry) geometries.add(object.geometry);
+    if (object.material) {
+      (Array.isArray(object.material) ? object.material : [object.material]).forEach(material => materials.add(material));
+    }
+  });
+  geometries.forEach(geometry => geometry.dispose());
+  materials.forEach(material => material.dispose());
+  instance.renderer.dispose();
+  instance.renderer.forceContextLoss();
+  instance.renderer.domElement.remove();
+}
+
+function selectHealthPillar(name) {
+  if (!HEALTH_PILLARS.includes(name) && name !== 'Overall health') return;
+  const layout = document.getElementById('health-scene-layout');
+  if (selectedHealthPillar === name && layout?.classList.contains('has-detail')) {
+    closeHealthDetail();
+    return;
+  }
+  selectedHealthPillar = name;
+  const health = apiData.portfolio_scorecard_health || {};
+  const detail = document.getElementById('health-detail');
+  if (!detail) return;
+  layout?.classList.add('has-detail');
+  detail.setAttribute('aria-hidden', 'false');
+  const scoreText = value => value == null ? '—' : `${Number(value).toFixed(1)}%`;
+  const group = health.groups?.[name];
+
+  if (name === 'Overall health') {
+    const groups = HEALTH_PILLARS.map(pillar => {
+      const pillarGroup = health.groups?.[pillar];
+      const value = pillarGroup?.percentage;
+      return `<div class="health-detail-pillar"><span>${pillar}</span><strong>${scoreText(value)}</strong></div>`;
+    }).join('');
+    const coverage = health.status === 'loading'
+      ? 'Loading 15-point scorecards...'
+      : health.score_pct == null
+        ? 'No matching scorecards are available.'
+        : `${health.scored_holdings} scored holdings · ${health.scored_weight_pct}% of portfolio value covered`;
+    detail.innerHTML = `
+      <div class="health-detail-head">
+        <div><span class="health-detail-kicker">PORTFOLIO HEALTH</span><strong>Overall</strong></div>
+        <b class="health-detail-score">${scoreText(health.score_pct)}</b>
+        <button type="button" class="health-detail-close" aria-label="Close health breakdown">&times;</button>
+      </div>
+      <div class="health-detail-note">${escHtml(coverage)}</div>
+      <div class="health-detail-groups">${groups}</div>`;
+  } else {
+    const criteria = (group?.criteria || []).map(item => `
+      <div class="health-criterion">
+        <span>${escHtml(item.criterion)}</span>
+        <div class="health-criterion-track"><i style="width:${Math.max(0, Math.min(100, Number(item.percentage) || 0))}%"></i></div>
+        <strong>${scoreText(item.percentage)}</strong>
+      </div>`).join('');
+    const coverage = group
+      ? `${group.coverage_pct}% of portfolio value · ${group.criteria.length} measures`
+      : 'Waiting for the portfolio scorecards.';
+    detail.innerHTML = `
+      <div class="health-detail-head">
+        <div><span class="health-detail-kicker">PILLAR SCORE</span><strong>${name}</strong></div>
+        <b class="health-detail-score">${scoreText(group?.percentage)}</b>
+        <button type="button" class="health-detail-close" aria-label="Close health breakdown">&times;</button>
+      </div>
+      <div class="health-detail-note">${escHtml(coverage)}</div>
+      <div class="health-detail-criteria">${criteria || '<span class="health-detail-empty">No measures available for this pillar.</span>'}</div>`;
+  }
+
+  document.querySelectorAll('[data-health-select]').forEach(control => {
+    const selected = control.dataset.healthSelect === name;
+    control.classList.toggle('selected', selected);
+    if (control.matches('button,[role="button"]')) control.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+}
+
+function closeHealthDetail() {
+  selectedHealthPillar = null;
+  document.getElementById('health-scene-layout')?.classList.remove('has-detail');
+  const detail = document.getElementById('health-detail');
+  if (detail) {
+    detail.setAttribute('aria-hidden', 'true');
+    detail.replaceChildren();
+  }
+  document.querySelectorAll('[data-health-select]').forEach(control => {
+    control.classList.remove('selected');
+    if (control.matches('button,[role="button"]')) control.setAttribute('aria-pressed', 'false');
+  });
 }
 
 // ════════ TAB RENDERERS ════════
 function renderOverview() {
     const o = apiData.overview;
-    const pf = apiData.performance;
+    const portfolioHoldings = apiData.portfolio?.holdings || [];
+
+    const portfolioHealth = apiData.portfolio_scorecard_health;
+    const healthBreakdown = portfolioHealth?.groups || {};
+    const healthScore = portfolioHealth?.score_pct ?? null;
+
+    const overviewStats = `
+      <div class="overview-hero">
+        <div class="overview-hero-main">
+          <div class="overview-kicker">Portfolio footprint</div>
+          <div class="overview-value">${formatCr(o.total_value)}</div>
+          <div class="overview-delta ${o.return_pct >= 0 ? 'pos' : 'neg'}">
+            ${o.return_pct != null ? `${o.return_pct >= 0 ? '▲' : '▼'} ${Math.abs(o.return_pct).toFixed(2)}% vs cost` : 'Return data pending'}
+          </div>
+        </div>
+        <div class="overview-metrics">
+          <div class="mini-stat"><span>Health</span><strong>${healthScore != null ? `${healthScore}%` : '—'}</strong></div>
+          <div class="mini-stat"><span>Invested</span><strong>${o.invested_value != null ? formatCr(o.invested_value) : '—'}</strong></div>
+          <div class="mini-stat"><span>Holdings</span><strong>${o.holding_count || 0}</strong></div>
+        </div>
+      </div>`;
+
+    const watchlistHtml = portfolioHoldings.map((holding, index) => `
+      <button class="stock-selector" data-stock-name="${attrEsc(holding.security_name)}"
+        onclick="openPortfolioStock(${index}); return false;">
+        <div class="stock-index">${String(index + 1).padStart(2, '0')}</div>
+        <div class="stock-copy">
+          <div class="stock-name">${escHtml(holding.security_name || 'Unnamed holding')}</div>
+          <div class="stock-meta">
+            <span>${formatCr(holding.effective_value)}</span>
+            <span class="gain-pill ${holding.gain_pct >= 0 ? 'positive' : 'negative'}">${holding.gain_pct != null ? `${holding.gain_pct >= 0 ? '+' : ''}${holding.gain_pct.toFixed(2)}%` : '—'}</span>
+          </div>
+        </div>
+      </button>`).join('') || '<div class="empty-chip">No holdings available</div>';
+
+    const healthMarkers = HEALTH_PILLARS.map(name => {
+      const value = healthBreakdown[name]?.percentage;
+      return `
+        <button class="health-three-marker health-pillar-marker" type="button" data-health-marker="${name}" data-health-select="${name}"
+          style="--marker-color:${HEALTH_COLORS[name]}"
+          aria-label="${name} score ${value == null ? 'not available' : `${Number(value).toFixed(1)} percent`}">
+          <span>${name}</span><strong>${value == null ? '—' : `${Number(value).toFixed(1)}%`}</strong>
+        </button>`;
+    }).join('');
+
+    const healthTriangle = `
+      <div class="health-triangle-wrap">
+        <div class="health-scene-layout" id="health-scene-layout">
+          <div class="health-scene-main">
+            <div class="health-three-stage" id="health-three-stage" aria-label="Rotating three-dimensional portfolio health triangle">
+              <div class="health-three-canvas" id="health-three-canvas" aria-hidden="true"></div>
+              <div class="health-three-markers">
+                ${healthMarkers}
+                <button class="health-three-marker health-three-core" type="button" data-health-marker="Overall health" data-health-select="Overall health"
+                  style="--marker-color:${HEALTH_COLORS['Overall health']}"
+                  aria-label="Overall portfolio health ${healthScore == null ? 'not available' : `${Number(healthScore).toFixed(1)} percent`} ">
+                  <span>Overall</span><strong>${healthScore == null ? '—' : `${Number(healthScore).toFixed(1)}%`}</strong>
+                </button>
+              </div>
+            </div>
+          </div>
+          <aside class="health-detail" id="health-detail" aria-live="polite" aria-hidden="true"></aside>
+        </div>
+      </div>`;
 
     // KPI Cards
     const kpis = `
@@ -206,18 +768,16 @@ function renderOverview() {
       </div>
       <div class="kpi">
         <div class="kpi-top"><span class="kpi-lb">Portfolio Health</span></div>
-        <div class="kpi-v">${o.health_score != null ? o.health_score + '%' : '&mdash;'}</div>
-        <div class="hbar"><div class="hfill" style="width:${o.health_score || 0}%"></div></div>
+        <div class="kpi-v">${healthScore != null ? `${healthScore}%` : '&mdash;'}</div>
+        <div class="hbar"><div class="hfill" style="width:${healthScore || 0}%"></div></div>
         ${(() => {
-          const hl = o.health || {};
-          if (o.health_score == null) return `<div class="kpi-d neu">no fundamentals yet</div>`;
-          const cls = hl.classes || {};
-          const parts = ['Growth', 'Quality', 'Ownership', 'Valuation']
-            .filter(k => cls[k] != null)
-            .map(k => `${k[0]} ${cls[k]}%`).join(' · ');
-          // State the coverage: a score over 60% of the book is not a score of the book
+          const hl = portfolioHealth || {};
+          if (healthScore == null) return `<div class="kpi-d neu">${hl.status === 'loading' ? 'loading 15-point scores' : 'no score data'}</div>`;
+          const parts = HEALTH_PILLARS
+            .filter(key => hl.groups?.[key]?.percentage != null)
+            .map(key => `${key[0]} ${hl.groups[key].percentage}%`).join(' · ');
           const cov = hl.scored_weight_pct != null && hl.scored_weight_pct < 99.5
-            ? `<div class="kpi-d neu" title="Cash, mutual funds and delisted scrips have no company fundamentals and are excluded from both sides of the average">on ${hl.scored_weight_pct}% of value</div>`
+            ? `<div class="kpi-d neu" title="Holdings without a scorecard are excluded from the average">on ${hl.scored_weight_pct}% of value</div>`
             : '';
           return `<div class="kpi-d neu" style="font-size:9.5px">${parts}</div>${cov}`;
         })()}
@@ -230,50 +790,50 @@ function renderOverview() {
         <td class="num tv">${formatCr(h.value)}</td><td class="num tw">${h.weight_pct}%</td><td class="num tg ${h.gain_pct >= 0 ? 'tp' : 'tn'}">${h.gain_pct != null ? (h.gain_pct>0?'+':'')+h.gain_pct.toFixed(2)+'%' : '-'}</td></tr>
     `).join('');
 
-    // Asset Allocation Donut
-    let donutHtml = '';
-    const aaColors = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6'];
-    if (o.asset_allocation && o.asset_allocation.length > 0) {
-        let slices = '';
-        let legend = '';
-        let offset = 0;
-        
-        o.asset_allocation.forEach((s, i) => {
-            const color = aaColors[i % aaColors.length];
-            const dash = (s.pct / 100) * 314.159;
-            slices += `<circle cx="60" cy="60" r="50" fill="none" stroke="${color}" stroke-width="16" stroke-dasharray="${dash} 314.159" stroke-dashoffset="${-offset}" />`;
-            offset += dash;
-            
-            legend += `<div style="display:flex; justify-content:space-between; margin-bottom:12px; font-size:13px;">
-                <div style="display:flex; align-items:center; gap:8px;"><div style="width:12px;height:12px;border-radius:50%;background:${color}"></div>${s.asset_class}</div>
-                <div><div style="font-weight:600; text-align:right">${s.pct.toFixed(2)}%</div><div style="font-size:11px; color:#64748b">${formatCr(s.value)}</div></div>
-            </div>`;
-        });
-        
-        donutHtml = `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding: 10px;">
-            <div style="position:relative; width:160px; height:160px;">
-                <svg viewBox="0 0 120 120" style="transform: rotate(-90deg)">${slices}</svg>
-                <div style="position:absolute; top:0;left:0;right:0;bottom:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                    <strong style="font-size:16px; color:#0f172a">${formatCr(o.total_value)}</strong>
-                    <span style="font-size:11px; color:#64748b">Total Value</span>
-                </div>
-            </div>
-            <div style="width:150px">${legend}</div>
-        </div>`;
+    const sectorColors = ['#08796a', '#3573c6', '#c8862a', '#17916b', '#d85d42', '#9ca3af'];
+    const allSectors = o.sector_allocation || [];
+    const sectorList = allSectors.slice(0, 5);
+    if (allSectors.length > 5) {
+      const remainder = allSectors.slice(5);
+      sectorList.push({
+        sector: 'Others',
+        value: remainder.reduce((total, sector) => total + (Number(sector.value) || 0), 0),
+        pct: remainder.reduce((total, sector) => total + (Number(sector.pct) || 0), 0),
+        isOther: true
+      });
     }
-
-    // Sector Allocation (Bar Chart)
-    const sectorsHtml = (o.sector_allocation || []).slice(0,5).map(s => `
-        <div style="margin-bottom:12px">
-            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:500; margin-bottom:4px; color:#334155">
-                <span>${s.sector.substring(0,25)}</span><span>${s.pct.toFixed(1)}%</span>
+    const sectorDonutHtml = sectorList.length ? (() => {
+      const radius = 53;
+      const circumference = 2 * Math.PI * radius;
+      const sliceGap = 2.8;
+      let offset = 0;
+      const slices = sectorList.map((sector, index) => {
+        const amount = circumference * Math.max(0, Number(sector.pct) || 0) / 100;
+        const color = sector.isOther ? '#9ca3af' : sectorColors[index];
+        const slice = `<circle class="sector-slice" cx="72" cy="72" r="${radius}" fill="none" stroke="${color}" stroke-width="14" stroke-dasharray="${Math.max(0, amount - sliceGap)} ${circumference}" stroke-dashoffset="${-offset}"/>`;
+        offset += amount;
+        return slice;
+      }).join('');
+      const legend = sectorList.map((sector, index) => `
+        <div class="sector-legend-row${sector.isOther ? ' sector-other' : ''}" title="${attrEsc(sector.sector)}: ${Number(sector.pct).toFixed(2)}% · ${formatCr(sector.value)}">
+          <span class="sector-swatch" style="background:${sector.isOther ? '#9ca3af' : sectorColors[index]}"></span>
+          <span class="sector-legend-name">${escHtml(sector.sector)}</span>
+          <strong>${Number(sector.pct).toFixed(1)}%</strong>
+        </div>`).join('');
+      return `
+        <div class="sector-allocation">
+          <div class="sector-donut-wrap">
+            <svg class="sector-donut-svg" viewBox="0 0 144 144" role="img" aria-label="Sector allocation donut">
+              <circle class="sector-donut-track" cx="72" cy="72" r="${radius}"></circle>
+              <g transform="rotate(-90 72 72)">${slices}</g>
+            </svg>
+            <div class="sector-donut-center">
+              <strong>${formatCr(o.total_value)}</strong><span>Portfolio</span>
             </div>
-            <div style="width:100%; height:12px; background:#f1f5f9; border-radius:4px; overflow:hidden">
-                <div style="width:${s.pct}%; height:100%; background:#2563eb"></div>
-            </div>
-        </div>
-    `).join('');
+          </div>
+          <div class="sector-legend">${legend}</div>
+        </div>`;
+    })() : '<div class="empty-chip">Sector allocation is not available yet.</div>';
 
     // Insights (from insights router)
     let insList = apiData.insights.insights || [];
@@ -288,31 +848,46 @@ function renderOverview() {
         </div>
     `).join('');
 
-    return `
-    ${o.has_partial_cost_data ? `<div class="ban" style="margin-bottom:18px;background:#fffbe0;border:1px solid #fde047;color:#854d0e">⚠️ <strong>Notice:</strong> Some accounts in this family view (like Demat) do not have historical cost data. Invested Value and Total Gain only reflect accounts with known costs.</div>` : ''}
-    
-    ${kpis}
-    
-    <div class="mid" style="grid-template-columns: 1fr 2fr; margin-bottom: 20px;">
-      <div class="crd">
-        <div class="crd-h"><div class="crd-t">Asset Allocation</div></div>
-        <div>${donutHtml}</div>
+    const portfolioSplit = `
+    <div class="overview-grid health-sector-grid">
+      <aside class="overview-panel sector-panel">
+        <div class="panel-header">
+          <h3>Sector distribution</h3>
+          <span class="soft-pill">${(o.sector_allocation || []).length} sectors</span>
+        </div>
+        ${sectorDonutHtml}
+      </aside>
+      <div class="overview-panel center-panel">
+        <div class="panel-header">
+          <h3>Portfolio health</h3>
+          <span class="soft-pill">${o.holding_count || 0} holdings</span>
+        </div>
+        ${healthTriangle}
       </div>
-      <div class="crd">
-        <div class="crd-h">
-          <div class="pf-hdr">
-            <div class="crd-t">Portfolio Growth</div>
-          </div>
+    </div>
+
+    <div class="overview-grid watch-growth-grid">
+      <aside class="overview-panel left-panel">
+        <div class="panel-header">
+          <h3>Portfolio watchlist</h3>
+          <button class="text-link" onclick="switchTab('portfolio'); return false;">View all</button>
+        </div>
+        <div class="stock-list">${watchlistHtml}</div>
+      </aside>
+      <div class="overview-panel wide-panel">
+        <div class="panel-header">
+          <h3>Portfolio growth</h3>
+          <button class="text-link" onclick="switchTab('performance'); return false;">Details</button>
         </div>
         <div class="chwrap" style="height: 250px; position: relative;"><canvas id="pc"></canvas></div>
       </div>
     </div>
 
-    <div class="mid" style="grid-template-columns: 1fr 1fr 1fr;">
-      <div class="crd">
-        <div class="crd-h" style="display:flex; justify-content:space-between; align-items:center;">
-            <div class="crd-t">Top Holdings</div>
-            <a href="#" onclick="switchTab('portfolio'); return false;" style="font-size:12px; color:#2563eb; text-decoration:none; font-weight:500">View All →</a>
+    <div class="overview-grid insight-grid">
+      <div class="overview-panel">
+        <div class="panel-header">
+          <h3>Top holdings</h3>
+          <button class="text-link" onclick="switchTab('portfolio'); return false;">Open portfolio</button>
         </div>
         <table class="ht">
           <thead><tr><th>Security</th><th class="num">Value</th><th class="num">Gain %</th></tr></thead>
@@ -324,28 +899,34 @@ function renderOverview() {
           </tbody>
         </table>
       </div>
-      
-      <div class="crd">
-        <div class="crd-h" style="display:flex; justify-content:space-between; align-items:center;">
-            <div class="crd-t">Sector Allocation</div>
-        </div>
-        <div style="padding-top:10px">${sectorsHtml}</div>
-      </div>
-      
-      <div class="crd">
-        <div class="crd-h" style="display:flex; justify-content:space-between; align-items:center;">
-            <div class="crd-t">Portfolio Insights</div>
-            <a href="#" onclick="switchTab('insights'); return false;" style="font-size:12px; color:#2563eb; text-decoration:none; font-weight:500">View All →</a>
+
+      <div class="overview-panel">
+        <div class="panel-header">
+          <h3>Portfolio insights</h3>
+          <button class="text-link" onclick="switchTab('insights'); return false;">All insights</button>
         </div>
         <div>${insHtml || '<p style="color:#94a3b8; font-size:13px">No insights generated yet.</p>'}</div>
       </div>
-    </div>
+    </div>`;
+
+    return `
+    ${o.has_partial_cost_data ? `<div class="ban" style="margin-bottom:18px;background:#fffbe0;border:1px solid #fde047;color:#854d0e">⚠️ <strong>Notice:</strong> Some accounts in this family view (like Demat) do not have historical cost data. Invested Value and Total Gain only reflect accounts with known costs.</div>` : ''}
+    ${overviewStats}
+    ${portfolioSplit}
+    ${kpis}
     `;
+}
+
+function selectOverviewStock(index) {
+  const holding = (apiData.portfolio?.holdings || [])[Number(index)];
+  if (!holding) return;
+  selectedOverviewStock = holding.security_name;
+    renderDashboard();
 }
 
 // ── Per-stock fundamental checklist (expandable Portfolio rows) ─────────────
 let checklistRows = [];          // holdings of the currently rendered table
-const checklistCache = {};       // security key -> API payload, fetched once
+let overviewScorecardRequest = 0;
 
 // One hue per sector, so two holdings in the same business read as related at a
 // glance and the column scans as a group rather than a row of loose labels. Text
@@ -389,6 +970,78 @@ function attrEsc(text) {
   return escHtml(text).replace(/"/g, '&quot;');
 }
 
+function checklistKey(holding) {
+  return `${holding.isin || ''}|${holding.security_name || ''}`;
+}
+
+async function loadOverviewScorecard(holding) {
+  const host = document.getElementById('overview-scorecard-content');
+  if (!host) return;
+  const requestId = ++overviewScorecardRequest;
+  if (!holding) {
+    host.innerHTML = '<div class="empty-chip">No stock is available to score.</div>';
+    return;
+  }
+
+  host.innerHTML = `<div class="scorecard-loading">Loading fundamentals for ${escHtml(holding.security_name)}...</div>`;
+  try {
+    const data = await requestScorecard(holding);
+    if (requestId !== overviewScorecardRequest || currentTab !== 'overview') return;
+    currentOverviewScorecardData = data;
+    host.innerHTML = renderScorecard15(data, holding, 'overview');
+  } catch (error) {
+    if (requestId !== overviewScorecardRequest || currentTab !== 'overview') return;
+    console.error('Overview scorecard load failed:', error);
+    host.innerHTML = `<div class="scorecard-error">Could not load the scorecard. Please try selecting this stock again.</div>`;
+  }
+}
+
+function renderScorecard15(data, holding, instanceKey) {
+  const domId = String(instanceKey).replace(/[^a-zA-Z0-9_-]/g, '-');
+  if (!data?.scorecard) {
+    return `<div class="empty-chip">A 15-point scorecard is not available for ${escHtml(holding?.security_name || 'this holding')}.</div>`;
+  }
+  scorecardInstances.set(domId, {data, holding});
+  const groups = (data.scorecard.groups || []).filter(group => HEALTH_PILLARS.includes(group.name));
+  const selected = HEALTH_PILLARS.includes(scorecardGroupSelections[domId])
+    ? scorecardGroupSelections[domId] : (groups[0]?.name || 'Growth');
+  scorecardGroupSelections[domId] = selected;
+  const activeGroup = groups.find(group => group.name === selected) || groups[0];
+  const tabs = groups.map(group => `
+    <button type="button" class="score15-tab${group.name === selected ? ' active' : ''}"
+      aria-pressed="${group.name === selected ? 'true' : 'false'}"
+      onclick="selectScorecardGroup('${domId}','${group.name}')">
+      <span>${escHtml(group.name)}</span><strong>${Number(group.percentage).toFixed(1)}%</strong>
+    </button>`).join('');
+  const criteria = (activeGroup?.criteria || []).map(item => `
+    <div class="score15-criterion">
+      <div class="score15-criterion-name">
+        <strong>${escHtml(item.criterion)}</strong>
+        <span>${escHtml(item.actual)} <i>· ${escHtml(item.full_marks_at)}</i></span>
+      </div>
+      <b>${item.score == null ? '—' : item.score}<span>/${item.pts}</span></b>
+    </div>`).join('');
+  const company = data.company || {};
+
+  return `
+    <div class="score15-wrap" id="score15-${domId}">
+      <div class="score15-heading">
+        <div><strong>${escHtml(company.name || data.query || holding?.security_name)}</strong><span>${escHtml(company.symbol || company.isin || '')} · 15 criteria</span></div>
+        <b>${Number(data.scorecard.score_pct).toFixed(1)}<small>%</small></b>
+      </div>
+      <div class="score15-tabs">${tabs}</div>
+      <div class="score15-criteria">${criteria || '<div class="empty-chip">No criteria in this pillar.</div>'}</div>
+    </div>`;
+}
+
+function selectScorecardGroup(instanceKey, name) {
+  const record = scorecardInstances.get(instanceKey);
+  const root = document.getElementById(`score15-${instanceKey}`);
+  if (!record || !root || !HEALTH_PILLARS.includes(name)) return;
+  scorecardGroupSelections[instanceKey] = name;
+  root.outerHTML = renderScorecard15(record.data, record.holding, instanceKey);
+}
+
 function toggleChecklist(idx) {
   const detail = document.getElementById(`detail-${idx}`);
   const chev = document.getElementById(`chev-${idx}`);
@@ -401,28 +1054,12 @@ function toggleChecklist(idx) {
 
   const h = checklistRows[idx];
   if (!h) return;
-  const key = (h.isin || '') + '|' + h.security_name;
   const body = document.getElementById(`detail-body-${idx}`);
+  body.innerHTML = `<div style="padding:18px;font-size:12px;color:#64748b">Loading the 15-point scorecard for ${escHtml(h.security_name)}...</div>`;
 
-  if (checklistCache[key]) {
-    body.innerHTML = renderChecklist(checklistCache[key], h, idx);
-    return;
-  }
-
-  body.innerHTML = `<div style="padding:18px;font-size:12px;color:#64748b">Loading fundamentals for ${h.security_name}…</div>`;
-
-  const params = new URLSearchParams();
-  if (h.isin) params.set('isin', h.isin);
-  params.set('name', h.security_name);
-
-  fetch(`/api/analysis/checklist?${params.toString()}`)
-    .then(async r => {
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    })
+  requestScorecard(h)
     .then(data => {
-      checklistCache[key] = data;
-      body.innerHTML = renderChecklist(data, h, idx);
+      if (body.isConnected) body.innerHTML = renderScorecard15(data, h, `portfolio-${idx}`);
     })
     .catch(e => {
       console.error('Checklist load failed:', e);
@@ -618,19 +1255,15 @@ function renderPortfolio() {
 
     const dash = '<span style="color:#cbd5e1">—</span>';
 
-    // Kept in a global so the expand handler can look a row up by index
-    checklistRows = hList;
-
     const rows = hList.map((h, idx) => {
         // A row valued from the statement is flagged, so a figure that is not at
         // CMP is never silently mixed in with the ones that are.
         const isLive = h.valued_at === 'live';
         return `
-        <tr class="h-row" onclick="toggleChecklist(${idx})" title="Click for the fundamental checklist">
+        <tr>
             <td>
               <div class="hn">
-                <span class="chev" id="chev-${idx}">&#9656;</span>
-                <span class="hl">${h.security_name}</span>
+                <button type="button" class="stock-link" onclick="openPortfolioStock(${idx})">${escHtml(h.security_name)}</button>
                 ${industryTag(h)}
               </div>
             </td>
@@ -638,9 +1271,6 @@ function renderPortfolio() {
             <td class="num">${h.quantity != null ? h.quantity.toLocaleString('en-IN', {maximumFractionDigits: 3}) : dash}</td>
             <td class="num tv">${h.effective_value != null ? formatCr(h.effective_value) : dash}${isLive ? '' : `<div style="font-size:10px;color:#f59e0b;font-weight:400" title="No live CMP matched - this is the statement value">at statement</div>`}</td>
             <td class="num tw">${h.weight_pct.toFixed(2)}%</td>
-        </tr>
-        <tr id="detail-${idx}" class="h-detail" style="display:none">
-            <td colspan="5" id="detail-body-${idx}" style="background:#f8fafc;padding:0"></td>
         </tr>
         `;
     }).join('');
@@ -825,4 +1455,11 @@ async function changeAccount(val) {
 }
 
 // Start
-initDashboard();
+document.querySelector('.sb-lo').addEventListener('click', async function(){
+  await fetch('/api/auth/logout', {method:'POST'});
+  window.location.href = 'login.html';
+});
+initDashboard().catch(error => {
+  console.error('Dashboard could not be loaded:', error);
+  window.location.replace('login.html');
+});

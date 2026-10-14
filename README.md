@@ -118,14 +118,15 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 ---
 
-## 🖥️ User Workflow
+## 🔐 Sign-in and Client Access
 
-1. **Client Directory:** Open `http://localhost:8000/`. You will land on the Client Directory. Click **"New Client"** to create a family profile.
-2. **Staging Area:** Click on the newly created client card to open `upload.html`. Drag and drop all relevant Demat and PMS PDF statements into the drop-zone.
-3. **Sequential Uploading:** Click **"Analyze Portfolio"**. The frontend sequentially queues the files to prevent database locks, triggering the LLM engine only on the final file.
-4. **AI Generation Spinner:** A loading spinner will appear for ~15 seconds while the backend crunches the raw math and queries the LLM API.
-5. **Dynamic Dashboard:** Once the AI finishes, you are instantly redirected to `dashboard.html`. Here, you can navigate between Portfolio, Performance, Risk, and Insights tabs. 
-6. **Account Toggling:** Use the top-right dropdown to instantly pivot the dashboard from the Aggregated Family View to specific individual accounts.
+Open `http://localhost:8000/` to reach the sign-in page. Clients can create an account with their name, email and password. A client without uploaded statements goes directly to their upload screen; after the first upload, signing in opens their portfolio dashboard.
+
+The admin signs in with `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `.env` (defaults: `admin` / `VIKABH@Admin2026!`). Change these values and set a long random `AUTH_SECRET` before exposing the app beyond a local development environment. The admin directory lists every client, current portfolio value, upload state, and links to their dashboard or upload screen. Client credentials are created through the sign-up page.
+
+Upload multiple PDF or Excel statements together. Exact duplicate file contents are rejected per client, even if renamed; a mixed batch continues past duplicate files and processes only new documents. New documents are added to the client's stored account data, and analysis runs once after the accepted batch. The dashboard remains backed by all that client's stored records.
+
+Sessions are stored in signed, HTTP-only cookies and expire after 12 hours. Passwords are stored as salted PBKDF2 hashes. Use HTTPS and a unique `AUTH_SECRET` in production.
 
 ---
 

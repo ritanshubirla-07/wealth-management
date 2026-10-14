@@ -5,7 +5,8 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.models import Client, Account
+from app.models import Client, Account, Holding, MarketData
+from app.valuation import value_holdings
 
 router = APIRouter(prefix="/client", tags=["Client"])
 
@@ -30,6 +31,7 @@ class ClientResponse(BaseModel):
     name: str
     phone: Optional[str]
     pan: Optional[str]
+    email: Optional[str] = None
     created_at: Optional[datetime] = None
     accounts: List[AccountResponse] = []
 
@@ -44,11 +46,39 @@ def create_client(client_in: ClientCreate, db: Session = Depends(get_db)):
     db.refresh(db_client)
     return db_client
 
-@router.get("/", response_model=List[ClientResponse])
+@router.get("/")
 def get_clients(db: Session = Depends(get_db)):
-    """Get all clients."""
+    """Get the admin directory with a current value for each client."""
     clients = db.execute(select(Client)).scalars().all()
-    return list(clients)
+    accounts = db.execute(select(Account)).scalars().all()
+    holdings = db.execute(select(Holding)).scalars().all()
+    market_rows = db.execute(select(MarketData)).scalars().all()
+    accounts_by_client = {}
+    account_owner = {}
+    for account in accounts:
+        accounts_by_client.setdefault(account.client_id, []).append(account)
+        account_owner[account.id] = account.client_id
+    holdings_by_client = {}
+    for holding in holdings:
+        owner_id = account_owner.get(holding.account_id)
+        if owner_id is not None:
+            holdings_by_client.setdefault(owner_id, []).append(holding)
+
+    result = []
+    for client in clients:
+        client_holdings = holdings_by_client.get(client.id, [])
+        valuation = value_holdings(client_holdings, market_rows)
+        result.append({
+            "id": client.id,
+            "name": client.name,
+            "email": client.email,
+            "created_at": client.created_at,
+            "account_count": len(accounts_by_client.get(client.id, [])),
+            "holding_count": len(client_holdings),
+            "portfolio_value": round(valuation.market_total, 2),
+            "has_uploads": bool(accounts_by_client.get(client.id)),
+        })
+    return result
 
 @router.get("/{client_id}", response_model=ClientResponse)
 def get_client(client_id: int, db: Session = Depends(get_db)):

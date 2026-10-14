@@ -60,6 +60,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 .err-wrp pre{font-size:12px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;text-align:left;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow-y:auto;width:100%;margin-bottom:16px;font-family:ui-monospace,monospace}
 .btn-secondary{background:#f1f5f9;color:#334155;padding:10px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;width:100%;font-family:inherit}
 .btn-secondary:hover{background:#e2e8f0}
+
+/* Portal palette */
+.sb{background:#004c48}.sb-logo{border-bottom-color:rgba(255,255,255,.13)}
+.sb-logo-ic{background:#08a956;border-radius:6px}.sb-logo small{color:#68d59a}
+.sb-nav a{color:rgba(230,245,240,.7)}.sb-nav a:hover{background:rgba(255,255,255,.08);color:#fff}
+.mn{background:#eee9e4}.up-box{border-radius:8px;box-shadow:0 4px 18px rgba(0,55,49,.08)}
+.up-ic{background:#e3f5eb;color:#069e55;border-radius:8px}.drop{background:#f8f7f4;border-color:#bfcec8;border-radius:7px}
+.drop:hover,.drop.drag{border-color:#08a956;background:#eef8f1}.btn-primary{background:#08a956;border-radius:5px}.btn-primary:hover{background:#008f4a}
+.spinner{border-color:#e1ebe5;border-top-color:#08a956}.btn-secondary{border-radius:5px}
 </style>
 </head>
 <body>
@@ -115,15 +124,28 @@ body{font-family:'Inter',system-ui,sans-serif;background:#ffffff;color:#1e293b;l
 
 <script>
 const urlParams = new URLSearchParams(window.location.search);
-const clientId = urlParams.get('client_id');
-if(!clientId) window.location.href = 'clients.html';
+let clientId = urlParams.get('client_id');
+let sessionUser = null;
 
 let selectedFiles = [];
 
-// Fetch client details
-fetch(`/api/client/${clientId}`).then(r=>r.json()).then(c => {
-  document.getElementById('cname').innerText = `Upload for ${c.name}`;
-}).catch(e=>console.error(e));
+async function prepareUpload() {
+  const response = await fetch('/api/auth/me');
+  if (!response.ok) { window.location.replace('login.html'); return; }
+  sessionUser = await response.json();
+  if (sessionUser.role === 'client') clientId = String(sessionUser.client_id);
+  if (!clientId) { window.location.replace('admin.html'); return; }
+  const clientResponse = await fetch(`/api/client/${clientId}`);
+  if (!clientResponse.ok) { window.location.replace('admin.html'); return; }
+  const client = await clientResponse.json();
+  document.getElementById('cname').innerText = `Upload for ${client.name}`;
+  if (sessionUser.role === 'admin') {
+    document.querySelector('.sb-nav').innerHTML = '<a href="admin.html">← Back to Clients</a>';
+  } else {
+    document.querySelector('.sb-nav').innerHTML = '<a href="dashboard.html">← Portfolio Dashboard</a>';
+  }
+}
+prepareUpload().catch(() => { window.location.replace('login.html'); });
 
 // Drag & Drop
 const dropz = document.getElementById('dropz');
@@ -170,20 +192,22 @@ function showError(title, detail) {
 }
 
 async function uploadFiles() {
+  if (!selectedFiles.length || !clientId) return;
   pollAttempts = 0;
   document.getElementById('upbox').style.display = 'none';
   document.getElementById('errbox').style.display = 'none';
   document.getElementById('spinbox').style.display = 'block';
 
-  // Upload sequentially to avoid DB locks and rate limits
+  let uploadedCount = 0;
+  const duplicateNames = [];
+  // Upload sequentially to avoid database locks; duplicates do not block new files.
   for(let i=0; i<selectedFiles.length; i++) {
     const f = selectedFiles[i];
-    const isLast = (i === selectedFiles.length - 1);
 
     const fd = new FormData();
     fd.append('file', f);
     fd.append('client_id', clientId);
-    fd.append('trigger_analysis', isLast ? 'true' : 'false');
+    fd.append('trigger_analysis', 'false');
 
     let res;
     try {
@@ -203,6 +227,11 @@ async function uploadFiles() {
       } catch (parseErr) {
         try { detailText = await res.text(); } catch (_) { /* keep default */ }
       }
+      if (res.status === 409) {
+        duplicateNames.push(f.name);
+        continue;
+      }
+      if (uploadedCount) fetch(`/api/upload/analyze/${clientId}`, { method: 'POST' });
       // Log BEFORE anything else changes state / navigates, so it's not lost
       console.error(`Upload failed for "${f.name}" (status ${res.status}):`, detailText);
       showError(`Failed to upload "${f.name}"`, detailText);
@@ -210,8 +239,21 @@ async function uploadFiles() {
     }
 
     console.log(`Uploaded "${f.name}" OK`);
+    uploadedCount++;
   }
 
+  if (!uploadedCount) {
+    showError('No new statements to add', duplicateNames.length
+      ? `These documents were already uploaded and were not processed:\n${duplicateNames.join('\n')}`
+      : 'Choose at least one new statement.');
+    return;
+  }
+  const analyzeResponse = await fetch(`/api/upload/analyze/${clientId}`, { method: 'POST' });
+  if (!analyzeResponse.ok) {
+    showError('Could not start portfolio analysis', 'The new files were saved, but analysis could not be queued. Please try again.');
+    return;
+  }
+  if (duplicateNames.length) console.info('Skipped previously uploaded documents:', duplicateNames);
   pollEngine();
 }
 

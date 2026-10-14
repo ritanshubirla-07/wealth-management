@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, List
-from sqlalchemy import String, ForeignKey
+from sqlalchemy import String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -10,6 +10,8 @@ class Client(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[Optional[str]] = mapped_column(String(254), nullable=True, unique=True, index=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     pan: Mapped[Optional[str]] = mapped_column(String(15), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
@@ -41,6 +43,17 @@ class Account(Base):
     holdings: Mapped[List["Holding"]] = relationship(
         "Holding", back_populates="account", cascade="all,delete-orphan"
     )
+
+
+class UploadedDocument(Base):
+    __tablename__ = "uploaded_documents"
+    __table_args__ = (UniqueConstraint("client_id", "sha256", name="uq_uploaded_document_client_hash"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), index=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    filename: Mapped[str] = mapped_column(String(300))
+    uploaded_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
 
 class Holding(Base):

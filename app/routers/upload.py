@@ -1,13 +1,15 @@
 import os
 import shutil
 import json
+import hashlib
 import logging
-from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
-from app.models import Client, Account, Holding
+from app.models import Client, Account, Holding, UploadedDocument
 from app.parsers.detector import detect_and_parse
 from app.sector_map import lookup_sector
 
@@ -19,6 +21,7 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file
 
 @router.post("/")
 def upload_file(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     client_id: int = Form(...),
@@ -29,61 +32,63 @@ def upload_file(
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    user = request.state.session
+    if user["role"] == "client" and user.get("client_id") != client.id:
+        raise HTTPException(status_code=403, detail="You can only upload to your own portfolio.")
 
-    # 2. Save file to disk (basename only — a client-supplied name must not escape UPLOAD_DIR)
+    # 2. Reject exact repeats before parsing; filenames alone are not identity.
     safe_name = os.path.basename(file.filename or "upload")
     if not safe_name or safe_name in (".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename")
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(UPLOAD_DIR, safe_name)
+    contents = file.file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    digest = hashlib.sha256(contents).hexdigest()
+    duplicate = db.execute(
+        select(UploadedDocument.id).where(
+            UploadedDocument.client_id == client.id,
+            UploadedDocument.sha256 == digest,
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail=f"{safe_name} has already been uploaded.")
+
+    client_upload_dir = os.path.join(UPLOAD_DIR, str(client.id))
+    os.makedirs(client_upload_dir, exist_ok=True)
+    file_path = os.path.join(client_upload_dir, f"{digest}_{safe_name}")
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        buffer.write(contents)
 
     # 3. Parse (PDF or Excel -> ParsedDocument)
     try:
         parsed = detect_and_parse(file_path, safe_name)
     except Exception as e:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=f"Failed to parse: {e}")
 
-    # 4. Upsert Account based on the original filename so every document is stored separately
-    account = db.execute(
-        select(Account).where(
-            Account.client_id == client.id,
-            Account.source_file == safe_name
-        )
-    ).scalars().first()
+    # Every distinct document is an additive snapshot; older uploads remain visible.
+    account = Account(
+        client_id=client.id,
+        account_type=parsed.account_type,
+        account_number=parsed.account_number,
+        portfolio_name=parsed.portfolio_name,
+        source_file=safe_name,
+        statement_date=parsed.statement_date,
+        has_cost_data=parsed.has_cost_data,
+        raw_markdown=parsed.raw_markdown,
+        raw_json=parsed.raw_json,
+    )
+    db.add(account)
 
-    if account:
-        # Wipe old holdings on re-upload
-        for h in db.execute(select(Holding).where(Holding.account_id == account.id)).scalars().all():
-            db.delete(h)
-        account.account_type = parsed.account_type
-        account.portfolio_name = parsed.portfolio_name
-        account.source_file = safe_name
-        account.statement_date = parsed.statement_date
-        account.has_cost_data = parsed.has_cost_data
-        account.raw_markdown = parsed.raw_markdown
-        account.raw_json = parsed.raw_json
-        # Clear stale LLM caches
-        account.overview_json = None
-        account.performance_json = None
-        account.insights_json = None
-        account.risk_analysis_json = None
-    else:
-        account = Account(
-            client_id=client.id,
-            account_type=parsed.account_type,
-            account_number=parsed.account_number,
-            portfolio_name=parsed.portfolio_name,
-            source_file=safe_name,
-            statement_date=parsed.statement_date,
-            has_cost_data=parsed.has_cost_data,
-            raw_markdown=parsed.raw_markdown,
-            raw_json=parsed.raw_json,
-        )
-        db.add(account)
-
-    db.commit()
+    db.add(UploadedDocument(client_id=client.id, sha256=digest, filename=safe_name))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"{safe_name} has already been uploaded.")
     db.refresh(account)
 
     # 4b. Screen out aggregate rows using the NSE + BSE masters. A row that is on
@@ -159,6 +164,24 @@ def upload_file(
             for h, why in dropped_rows
         ],
     }
+
+
+@router.post("/analyze/{client_id}")
+def analyze_uploads(
+    client_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    user = request.state.session
+    if user["role"] == "client" and user.get("client_id") != client.id:
+        raise HTTPException(status_code=403, detail="You can only analyze your own portfolio.")
+    background_tasks.add_task(_analyze_pending_accounts, client.id)
+    background_tasks.add_task(_refresh_market_data, client.id)
+    return {"status": "analysis queued", "client_id": client.id}
 
 
 # ── Background: Screener market data ──

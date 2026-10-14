@@ -29,6 +29,8 @@ def get_db() -> Generator[Session, None, None]:
 # so new columns on an existing table are added here on startup. Each entry is
 # (table, column, SQL type); adding a column is idempotent and non-destructive.
 _ADDED_COLUMNS = (
+    ("clients", "email", "VARCHAR(254)"),
+    ("clients", "password_hash", "VARCHAR(200)"),
     ("holdings", "isin", "VARCHAR(12)"),
     ("holdings", "quantity", "FLOAT"),
     ("market_data", "fundamentals_json", "TEXT"),

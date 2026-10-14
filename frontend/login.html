@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VIKABH | Client Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{font-family:'DM Sans',sans-serif;color:#163b38;background:#eee9e4;font-synthesis:none;text-rendering:optimizeLegibility}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:linear-gradient(135deg,#f2ece7 0%,#e9e6df 100%)}
+.top{height:76px;background:#004c48;color:white;display:flex;align-items:center;padding:0 clamp(22px,5vw,72px);gap:26px;border-bottom:1px solid rgba(255,255,255,.12)}
+.brand{font:800 27px 'Manrope',sans-serif;letter-spacing:0;color:white;text-decoration:none}.divider{height:30px;border-left:1px solid rgba(255,255,255,.22)}.portal{font-size:14px;color:#bed5d0}
+.layout{width:min(1120px,calc(100% - 40px));margin:auto;display:grid;grid-template-columns:minmax(0,1fr) 430px;align-items:center;gap:clamp(36px,8vw,110px);padding:60px 0}
+.intro{max-width:500px}.eyebrow{color:#079b59;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.4px}.intro h1{font:800 clamp(36px,5vw,58px)/1.05 'Manrope',sans-serif;letter-spacing:0;color:#064d48;margin:14px 0}.intro p{font-size:16px;line-height:1.7;color:#657572;max-width:420px}.rule{width:64px;height:4px;background:#08bd60;margin-top:28px;border-radius:2px}
+.panel{background:#fff;border:1px solid #dce2de;border-radius:8px;padding:32px;box-shadow:0 16px 45px rgba(9,54,49,.09)}
+.switch{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #e5eae7;margin:-2px 0 25px}.switch button{border:0;border-bottom:3px solid transparent;background:transparent;padding:12px;color:#71817e;font:700 14px 'DM Sans',sans-serif;cursor:pointer}.switch button.active{border-bottom-color:#08b960;color:#07564e}
+h2{font:700 22px 'Manrope',sans-serif;margin:0 0 5px;color:#123f3b}.sub{font-size:13px;color:#83908d;margin:0 0 23px}.field{display:grid;gap:7px;margin-bottom:16px}.field label{font-size:12px;font-weight:700;color:#536763}.field input{width:100%;height:45px;padding:0 13px;border:1px solid #d5ddda;border-radius:5px;background:#fff;color:#193c39;font:14px 'DM Sans',sans-serif;outline:none}.field input:focus{border-color:#079b59;box-shadow:0 0 0 3px rgba(8,185,96,.12)}
+.submit{width:100%;height:46px;border:0;border-radius:5px;background:#05a956;color:white;font:700 14px 'DM Sans',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px}.submit:hover{background:#008e4b}.submit:disabled{opacity:.6;cursor:wait}.error{min-height:20px;color:#b43333;font-size:12px;margin:10px 0 0}.foot{font-size:11px;color:#98a29f;text-align:center;margin:22px 0 0}
+@media(max-width:760px){.top{height:66px}.layout{grid-template-columns:1fr;gap:28px;padding:42px 0}.intro{max-width:unset}.intro h1{font-size:38px}.intro p{font-size:14px}.panel{padding:25px}}
+</style>
+</head>
+<body>
+<header class="top"><a class="brand" href="/">VIKABH</a><span class="divider"></span><span class="portal">Client Portal</span></header>
+<main class="layout">
+  <section class="intro"><div class="eyebrow">Portfolio intelligence</div><h1>Your wealth,<br>in clear view.</h1><p>Sign in to review your portfolio, or create a secure client account to begin with your own statements.</p><div class="rule"></div></section>
+  <section class="panel" aria-label="Account access">
+    <div class="switch" role="tablist"><button id="login-tab" class="active" type="button" onclick="showMode('login')">Sign in</button><button id="signup-tab" type="button" onclick="showMode('signup')">Create account</button></div>
+    <form id="login-form">
+      <h2>Welcome back</h2><p class="sub">Access your VIKABH portfolio workspace.</p>
+      <div class="field"><label for="login-user">Email or admin username</label><input id="login-user" name="username" autocomplete="username" required></div>
+      <div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required></div>
+      <button class="submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
+    </form>
+    <form id="signup-form" hidden>
+      <h2>Client registration</h2><p class="sub">Create your personal portfolio workspace.</p>
+      <div class="field"><label for="signup-name">Full name</label><input id="signup-name" name="name" autocomplete="name" required maxlength="200"></div>
+      <div class="field"><label for="signup-email">Email</label><input id="signup-email" name="email" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="signup-password">Password</label><input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+      <button class="submit" type="submit">Create account <span aria-hidden="true">→</span></button>
+    </form>
+    <div class="error" id="error" role="alert"></div><p class="foot">Your account details are encrypted and kept private.</p>
+  </section>
+</main>
+<script>
+const errorEl=document.getElementById('error');
+function destination(user){if(user.role==='admin')return 'admin.html';return user.has_uploads?`dashboard.html?client_id=${user.client_id}`:'upload.html'}
+function showMode(mode){const login=mode==='login';document.getElementById('login-form').hidden=!login;document.getElementById('signup-form').hidden=login;document.getElementById('login-tab').classList.toggle('active',login);document.getElementById('signup-tab').classList.toggle('active',!login);errorEl.textContent=''}
+if(location.hash==='#signup')showMode('signup');
+async function sendForm(form,url){errorEl.textContent='';const button=form.querySelector('button[type="submit"]');button.disabled=true;try{const payload=Object.fromEntries(new FormData(form));const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const raw=await response.text();let data={};if(raw){try{data=JSON.parse(raw)}catch{data.detail=raw}}if(!response.ok)throw new Error(data.detail||`Request failed (${response.status}). Please try again.`);if(!data.role)throw new Error('The server returned an incomplete sign-in response. Please retry; if it continues, contact the administrator.');window.location.href=destination(data)}catch(error){errorEl.textContent=error.message||'Connection failed. Please try again.';button.disabled=false}}
+document.getElementById('login-form').addEventListener('submit',event=>{event.preventDefault();sendForm(event.currentTarget,'/api/auth/login')});
+document.getElementById('signup-form').addEventListener('submit',event=>{event.preventDefault();sendForm(event.currentTarget,'/api/auth/signup')});
+fetch('/api/auth/me').then(async response=>{if(response.ok){const user=await response.json();window.location.replace(destination(user))}}).catch(()=>{});
+</script>
+</body>
+</html>

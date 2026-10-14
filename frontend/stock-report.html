@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Company Scorecard | VIKABH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{font-family:'DM Sans',sans-serif;color:#243a35;background:#f1f5f2;font-synthesis:none;text-rendering:optimizeLegibility;font-variant-numeric:tabular-nums}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#f1f5f2}button{font:inherit}
+.report{display:grid;grid-template-columns:340px minmax(0,1fr);min-height:100vh}
+.summary{position:sticky;top:0;height:100vh;overflow:auto;padding:23px 22px 26px;background:#073f3b;color:#f6fbf8}
+.brandline{font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#acc9bd;margin-bottom:22px}
+.back{display:inline-flex;align-items:center;gap:7px;margin:0 0 22px;padding:0;border:0;background:none;color:#dcece5;font-size:12px;font-weight:600;cursor:pointer}
+.back:hover{color:#fff}.back span{font-size:17px;line-height:1}
+.nav-label{display:block;margin-bottom:7px;color:#a9c3b7;font-size:10px;font-weight:600}
+.stock-nav{display:grid;grid-template-columns:38px minmax(0,1fr) 38px;gap:7px;align-items:center}
+.nav-arrow{height:38px;border:1px solid rgba(255,255,255,.15);border-radius:7px;background:rgba(255,255,255,.06);color:white;font-size:17px;cursor:pointer}
+.nav-arrow:hover:not(:disabled){background:rgba(255,255,255,.14)}.nav-arrow:disabled{opacity:.35;cursor:default}
+.stock-count{overflow:hidden;color:#f4faf6;font-size:12px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
+.company{margin:21px 0 2px;font:800 28px/1.12 'Manrope',sans-serif;letter-spacing:0;color:#fff;overflow-wrap:anywhere}
+.company-meta{color:#bdd4ca;font-size:12px;line-height:1.45}
+.company-code{margin-top:4px;color:#88aa9c;font-size:10px;letter-spacing:.03em}
+.position-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:22px 0 25px}
+.stat span{display:block;margin-bottom:4px;color:#abc7ba;font-size:10px}.stat strong{display:block;color:#fff;font:700 16px 'Manrope',sans-serif;white-space:nowrap}
+.health-hero{display:grid;grid-template-columns:148px minmax(0,1fr);gap:15px;align-items:center;margin:12px 0 25px}
+.ring{width:148px;aspect-ratio:1;display:grid;place-items:center;border-radius:50%;background:conic-gradient(var(--tone) 0deg var(--score-angle),rgba(255,255,255,.13) var(--score-angle) 360deg);transform:rotate(-90deg)}
+.ring-core{width:calc(100% - 23px);aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:50%;background:#073f3b;transform:rotate(90deg)}
+.ring-core strong{font:800 29px 'Manrope',sans-serif;color:#fff}.ring-core span{color:#abc7ba;font-size:10px}.ring-core small{margin-top:2px;color:#83a89a;font-size:9px}
+.overall-copy{min-width:0}.overall-copy span{display:block;color:#abc7ba;font-size:10px}.overall-copy strong{display:block;margin:3px 0 6px;color:#fff;font:800 24px 'Manrope',sans-serif}.grade{display:inline-flex;padding:4px 8px;border-radius:999px;background:rgba(133,201,175,.18);color:#a8ddc2;font-size:10px;font-weight:700}
+.pillar-list{display:grid;gap:14px}.pillar{display:grid;gap:5px}.pillar-head{display:flex;justify-content:space-between;gap:12px;color:#eff8f3;font-size:11px}.pillar-head strong{font-variant-numeric:tabular-nums}.pillar-track{height:7px;border-radius:999px;background:rgba(255,255,255,.15);overflow:hidden}.pillar-fill{height:100%;width:var(--pct);border-radius:inherit;background:var(--pillar-color)}
+.side-status{margin-top:20px;color:#9bb9ac;font-size:10px;line-height:1.5}
+.content{min-width:0;padding:28px clamp(18px,3vw,48px) 36px;background:#fff}
+.content-head{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:21px;padding-bottom:13px;border-bottom:1px solid #dfe7e2}
+.content-kicker{color:#83938b;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.content-head h2{margin:4px 0 0;color:#173b35;font:750 21px 'Manrope',sans-serif;letter-spacing:0}
+.content-total{flex:none;color:#70837a;font-size:11px;text-align:right}.content-total strong{display:block;color:#173b35;font-size:14px}
+.group{margin:0 0 20px}.group-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:0 0 8px;border-bottom:1px solid #dfe7e2}
+.group-head h3{margin:0;color:var(--pillar-color);font:750 14px 'Manrope',sans-serif}.group-score{color:#73847c;font-size:11px;white-space:nowrap}.group-score strong{color:#36564b}
+.criteria-head,.criterion{display:grid;grid-template-columns:minmax(190px,1fr) 82px minmax(105px,.42fr) 92px 48px;gap:12px;align-items:center}
+.criteria-head{padding:9px 0 7px;color:#7c8983;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.criterion{min-height:38px;border-bottom:1px solid #edf1ee;color:#394a43;font-size:11px}
+.criterion-name{font-weight:500}.actual{text-align:right;color:#203e36;font-weight:700}.target{color:#75847d;font-size:10px;white-space:nowrap}
+.score-dots{display:flex;justify-content:center;gap:5px}.score-dot{width:12px;height:12px;border:1px solid #d3dcd7;border-radius:50%;background:#fff}.score-dot.on{border-color:var(--pillar-color);background:var(--pillar-color)}
+.points{text-align:right;color:#203e36;font-weight:700;white-space:nowrap}.points span{color:#819088;font-weight:500}
+.state{display:grid;min-height:55vh;place-items:center;color:#61746a;text-align:center}.state strong{display:block;margin-bottom:6px;color:#193e36;font:700 17px 'Manrope',sans-serif}.state-error{color:#a64646}.state button{margin-top:12px;padding:8px 12px;border:1px solid #cbd9d1;border-radius:6px;background:#fff;color:#075d4e;font-weight:650;cursor:pointer}
+@media(max-width:1000px){.report{grid-template-columns:300px minmax(0,1fr)}.summary{padding:20px 17px}.health-hero{grid-template-columns:120px minmax(0,1fr);gap:12px}.ring{width:120px}.ring-core strong{font-size:25px}.criteria-head,.criterion{grid-template-columns:minmax(150px,1fr) 68px minmax(90px,.4fr) 72px 38px;gap:8px}.score-dot{width:10px;height:10px}}
+@media(max-width:720px){.report{grid-template-columns:minmax(0,1fr)}.summary{position:relative;height:auto;overflow:visible;padding:18px 18px 20px}.brandline{margin-bottom:14px}.back{margin-bottom:14px}.company{font-size:24px;margin-top:16px}.position-stats{margin:17px 0}.health-hero{grid-template-columns:105px minmax(0,1fr);max-width:390px;margin:16px 0}.ring{width:105px}.ring-core{width:calc(100% - 17px)}.ring-core strong{font-size:22px}.pillar-list{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.pillar-head{font-size:9px}.pillar-track{height:6px}.side-status{margin-top:12px}.content{padding:22px 16px 28px}.content-head h2{font-size:18px}.criteria-head,.criterion{grid-template-columns:minmax(112px,1fr) 57px minmax(76px,.6fr) 58px 31px;gap:5px}.criteria-head{font-size:8px}.criterion{font-size:10px;min-height:42px}.target{font-size:9px}.score-dots{gap:2px}.score-dot{width:8px;height:8px}.points{font-size:10px}}
+@media(max-width:390px){.pillar-list{grid-template-columns:minmax(0,1fr)}.pillar-head{font-size:10px}.content{padding-inline:12px}.criteria-head,.criterion{grid-template-columns:minmax(100px,1fr) 49px minmax(65px,.6fr) 48px 27px;gap:4px}.score-dot{width:7px;height:7px}}
+</style>
+</head>
+<body>
+<div class="report" id="report">
+  <aside class="summary">
+    <div class="brandline">VIKABH · Company report card</div>
+    <button class="back" id="back" type="button"><span aria-hidden="true">‹</span> Back to portfolio</button>
+    <span class="nav-label">Portfolio holding</span>
+    <div class="stock-nav">
+      <button class="nav-arrow" id="previous" type="button" aria-label="Previous holding">‹</button>
+      <div class="stock-count" id="stock-count">Holding</div>
+      <button class="nav-arrow" id="next" type="button" aria-label="Next holding">›</button>
+    </div>
+    <div id="company-summary"><div class="state"><div>Loading scorecard...</div></div></div>
+    <div class="pillar-list" id="pillar-list"></div>
+    <div class="side-status" id="coverage-note"></div>
+  </aside>
+  <main class="content" id="report-content">
+    <div class="content-head"><div><div class="content-kicker">Fundamental assessment</div><h2>Company scorecard</h2></div><div class="content-total" id="content-total"></div></div>
+    <div id="criteria-content"><div class="state"><div>Loading criteria...</div></div></div>
+  </main>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const clientId = params.get('client_id') || '';
+const account = params.get('account') || 'family';
+const sourceTab = ['overview', 'portfolio'].includes(params.get('source_tab')) ? params.get('source_tab') : 'portfolio';
+const listKey = params.get('list_key') || '';
+let stockIndex = Number(params.get('index') || 0);
+let holdingList = [];
+let currentHolding = {security_name: params.get('name') || '', isin: params.get('identifier') || ''};
+let currentPayload = null;
+const scorecardUrl = `${location.protocol}//${location.hostname}:8050/api/scorecard`;
+const HEALTH_PILLARS = ['Growth', 'Quality', 'Valuation'];
+const COLORS = {Growth:'#84b9a4',Quality:'#51b39a',Valuation:'#e0b45d'};
+
+function escapeHtml(value){return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function formatCr(value){const number=Number(value);if(!Number.isFinite(number))return '—';if(number>=10000000)return `₹${(number/10000000).toFixed(2)} Cr`;if(number>=100000)return `₹${(number/100000).toFixed(2)} L`;return `₹${number.toLocaleString('en-IN',{maximumFractionDigits:0})}`}
+function gradeFor(value){if(value>=70)return 'Strong';if(value>=50)return 'Fair';if(value>0)return 'Building';return 'Not scored'}
+function backUrl(){const query=new URLSearchParams({client_id:clientId});if(account!=='family')query.set('account',account);return `dashboard.html?${query.toString()}#${sourceTab}`}
+function identifierFor(holding){return String(holding?.isin||holding?.nse_symbol||holding?.security_name||params.get('identifier')||'').trim()}
+function updateUrl(holding,index){const next=new URLSearchParams(params);next.set('identifier',identifierFor(holding));next.set('name',holding.security_name||'');next.set('index',String(index));history.replaceState(null,'',`${location.pathname}?${next.toString()}`)}
+function setNavigation(){const count=document.getElementById('stock-count');count.textContent=holdingList.length?`${stockIndex+1}. ${currentHolding.security_name}`:'Selected holding';document.getElementById('previous').disabled=stockIndex<=0;document.getElementById('next').disabled=!holdingList.length||stockIndex>=holdingList.length-1}
+function showError(message){document.getElementById('company-summary').innerHTML=`<div class="state state-error"><div><strong>Scorecard unavailable</strong>${escapeHtml(message)}</div></div>`;document.getElementById('criteria-content').innerHTML='';document.getElementById('content-total').textContent=''}
+function showLoading(){document.getElementById('company-summary').innerHTML='<div class="state"><div>Loading company data...</div></div>';document.getElementById('criteria-content').innerHTML='<div class="state"><div>Loading criteria...</div></div>'}
+function render(payload){
+  currentPayload=payload;
+  const company=payload.company||{};
+  const card=payload.scorecard||{};
+  const overall=Number(card.score_pct)||0;
+  const tone=overall>=70?'#80c8aa':overall>=50?'#77b9aa':'#e1b85f';
+  const sector=currentHolding.sector_group||currentHolding.sector||company.sector||'';
+  const industry=currentHolding.industry||company.industry||'';
+  const location=[sector,industry].filter((value,index,array)=>value&&array.indexOf(value)===index).join(' · ');
+  const value=Number(currentHolding.effective_value);
+  const weight=Number(currentHolding.weight_pct);
+  document.title=`${company.name||currentHolding.security_name||'Company'} | VIKABH Scorecard`;
+  document.getElementById('company-summary').innerHTML=`
+    <h1 class="company">${escapeHtml(company.name||currentHolding.security_name||'Company')}</h1>
+    <div class="company-meta">${escapeHtml(location||'Company fundamentals')}</div>
+    <div class="company-code">${escapeHtml(company.symbol||'')} ${company.isin?`· ${escapeHtml(company.isin)}`:''}</div>
+    <div class="position-stats">
+      <div class="stat"><span>Weight</span><strong>${Number.isFinite(weight)?`${weight.toFixed(2)}%`:'—'}</strong></div>
+      <div class="stat"><span>Value</span><strong>${Number.isFinite(value)?formatCr(value):'—'}</strong></div>
+      <div class="stat"><span>Criteria</span><strong>15</strong></div>
+    </div>
+    <div class="health-hero">
+      <div class="ring" style="--score-angle:${overall*3.6}deg;--tone:${tone}"><div class="ring-core"><strong>${overall.toFixed(0)}%</strong><span>of ${Number(card.max_total)||0} points</span><small>${Number(card.total_score)||0} earned</small></div></div>
+      <div class="overall-copy"><span>Overall health</span><strong>${overall.toFixed(1)}%</strong><span class="grade">${gradeFor(overall)}</span></div>
+    </div>`;
+  const groups=(card.groups||[]).filter(group=>HEALTH_PILLARS.includes(group.name));
+  document.getElementById('pillar-list').innerHTML=groups.map(group=>`<div class="pillar" style="--pct:${Math.max(0,Math.min(100,Number(group.percentage)||0))}%;--pillar-color:${COLORS[group.name]}"><div class="pillar-head"><span>${escapeHtml(group.name)}</span><strong>${Number(group.score)||0} / ${Number(group.max_score)||0}</strong></div><div class="pillar-track"><div class="pillar-fill"></div></div></div>`).join('');
+  document.getElementById('coverage-note').textContent=`${groups.reduce((count,group)=>count+(group.criteria||[]).length,0)} scored criteria · Source matched by ${payload.matched_by||'identifier'}`;
+  document.getElementById('content-total').innerHTML=`<strong>${Number(card.total_score)||0} / ${Number(card.max_total)||0}</strong>${Number(card.score_pct)||0}% total`;
+  const content=groups.map(group=>{
+    const criteria=group.criteria||[];
+    return `<section class="group" style="--pillar-color:${COLORS[group.name]}">
+      <div class="group-head"><h3>${escapeHtml(group.name)}</h3><div class="group-score"><strong>${Number(group.score)||0} of ${Number(group.max_score)||0}</strong> · ${Number(group.percentage)||0}%</div></div>
+      <div class="criteria-head"><span>Criterion</span><span style="text-align:right">Actual</span><span>Full marks at</span><span style="text-align:center">Score</span><span style="text-align:right">Pts</span></div>
+      ${criteria.map(item=>{const max=Math.max(0,Number(item.pts)||0),score=Math.max(0,Math.min(max,Number(item.score)||0));return `<div class="criterion" style="--pillar-color:${COLORS[group.name]}">
+        <span class="criterion-name">${escapeHtml(item.criterion)}</span><span class="actual">${escapeHtml(item.actual)}</span><span class="target">${escapeHtml(item.full_marks_at)}</span>
+        <span class="score-dots" aria-label="${score} of ${max}">${Array.from({length:max},(_,i)=>`<i class="score-dot${i<score?' on':''}"></i>`).join('')}</span>
+        <span class="points">${score}<span>/${max}</span></span>
+      </div>`}).join('')}
+    </section>`;
+  }).join('');
+  document.getElementById('criteria-content').innerHTML=content||'<div class="state"><div><strong>No criteria returned</strong>The scorecard service returned no Growth, Quality, or Valuation groups.</div></div>';
+}
+async function loadHolding(holding,index){
+  currentHolding=holding;stockIndex=index;setNavigation();updateUrl(holding,index);showLoading();
+  const identifier=identifierFor(holding);
+  if(!identifier){showError('This holding has no ISIN, exchange symbol, or company name to match.');return}
+  try{const response=await fetch(`${scorecardUrl}?identifier=${encodeURIComponent(identifier)}`);const payload=await response.json();if(!response.ok)throw new Error(payload.detail||`Request failed (${response.status})`);if(!payload.scorecard?.groups)throw new Error('The scorecard response is incomplete.');render(payload)}catch(error){showError(error.message||'Could not reach the scorecard service.')}
+}
+function moveHolding(step){const index=stockIndex+step;if(index<0||index>=holdingList.length)return;loadHolding(holdingList[index],index)}
+document.getElementById('back').addEventListener('click',()=>{location.href=backUrl()});
+document.getElementById('previous').addEventListener('click',()=>moveHolding(-1));
+document.getElementById('next').addEventListener('click',()=>moveHolding(1));
+(async function init(){
+  const session=await fetch('/api/auth/me');if(!session.ok){location.href='login.html';return}
+  const user=await session.json();if(user.role==='client'&&clientId&&String(user.client_id)!==String(clientId)){showError('This report belongs to another client.');return}
+  try{holdingList=JSON.parse(sessionStorage.getItem(listKey)||'[]')}catch{holdingList=[]}
+  if(holdingList.length){stockIndex=Math.max(0,Math.min(holdingList.length-1,stockIndex));currentHolding=holdingList[stockIndex]||currentHolding}
+  setNavigation();
+  await loadHolding(currentHolding,stockIndex);
+})().catch(error=>showError(error.message||'Could not initialize this report.'));
+</script>
+</body>
+</html>
